@@ -31,10 +31,11 @@ class ChibiOSHWDef(object):
     f1_vtypes = ['CRL', 'CRH', 'ODR']
     af_labels = ['USART', 'UART', 'SPI', 'I2C', 'SDIO', 'SDMMC', 'OTG', 'JT', 'TIM', 'CAN', 'QUADSPI', 'OCTOSPI', 'ETH', 'MCO']
 
-    def __init__(self, quiet=False, bootloader=False, signed_fw=False, outdir=None, hwdef=[], default_params_filepath=None):
+    def __init__(self, quiet=False, bootloader=False, file="", signed_fw=False, outdir=None, hwdef=[], default_params_filepath=None):
         self.outdir = outdir
         self.hwdef = hwdef
         self.bootloader = bootloader
+        self.file = file
         self.signed_fw = signed_fw
         self.default_params_filepath = default_params_filepath
         self.quiet = quiet
@@ -1033,14 +1034,23 @@ class ChibiOSHWDef(object):
             self.env_vars['PERIPH_FW'] = 0
 
         # write any custom STM32 defines
+        # for duplicate defines, last occurrence wins (override semantics for included hwdefs)
+        define_last_idx = {}
+        for i, d in enumerate(self.alllines):
+            if d.startswith('define '):
+                name = d.split()[1]
+                define_last_idx[name] = i
+
         using_chibios_can = False
-        for d in self.alllines:
+        for i, d in enumerate(self.alllines):
             if d.startswith('STM32_'):
                 f.write('#define %s\n' % d)
             if d.startswith('define '):
+                name = d.split()[1]
                 if 'HAL_USE_CAN' in d:
                     using_chibios_can = True
-                f.write('#define %s\n' % d[7:])
+                if define_last_idx[name] == i:
+                    f.write('#define %s\n' % d[7:])
 
         if self.intdefines.get('AP_NETWORKING_ENABLED', 0) == 1:
             self.enable_networking(f)
@@ -2907,7 +2917,6 @@ Please run: Tools/scripts/build_bootloaders.py %s
             return False
 
         content = self.get_processed_defaults_file(defaults_abspath)
-
         with open(filepath, "w") as processed_defaults_fh:
             processed_defaults_fh.write(content)
 
@@ -2997,11 +3006,13 @@ Please run: Tools/scripts/build_bootloaders.py %s
         self.alllines.append(line)
 
         p = None
-        if a[0].startswith('P') and a[0][1] in self.ports:
+        value = a[0][2:]
+
+        if a[0].startswith('P') and a[0][1] in self.ports and re.fullmatch(r"-?\d+", value):
             # it is a port/pin definition
             try:
                 port = a[0][1]
-                pin = int(a[0][2:])
+                pin = int(value)
                 label = a[1]
                 type = a[2]
                 extra = a[3:]
@@ -3305,7 +3316,6 @@ Please run: Tools/scripts/build_bootloaders.py %s
     def run(self):
         # process input file
         self.process_hwdefs()
-
         if "MCU" not in self.config:
             self.error("Missing MCU type in config")
 
@@ -3356,6 +3366,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--signed-fw', action='store_true', default=False, help='configure for signed FW')
     parser.add_argument(
+        '--file', type=str, required=False, default="", help='default params definition file')
+    parser.add_argument(
         'hwdef', type=str, nargs='+', default=None, help='hardware definition file')
     parser.add_argument(
         '--params', type=str, default=None, help='user default params path')
@@ -3367,6 +3379,7 @@ if __name__ == '__main__':
     c = ChibiOSHWDef(
         outdir=args.outdir,
         bootloader=args.bootloader,
+        file=args.file,
         signed_fw=args.signed_fw,
         hwdef=args.hwdef,
         default_params_filepath=args.params,
