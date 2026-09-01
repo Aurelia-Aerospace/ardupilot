@@ -186,8 +186,11 @@ void Copter::failsafe_ekf_event()
         return;
     }
 
-    // take action based on fs_ekf_action parameter
-    switch (g.fs_ekf_action) {
+    if(failsafe.non_allowed_area){//We have lost gps and are flying in a prohibited area, then we land
+        set_mode_land_with_pause(ModeReason::EKF_FAILSAFE);
+    }
+    else{// take action based on fs_ekf_action parameter
+        switch (g.fs_ekf_action) {
         case FS_EKF_ACTION_ALTHOLD:
             // AltHold
             if (failsafe.radio || !set_mode(Mode::Number::ALT_HOLD, ModeReason::EKF_FAILSAFE)) {
@@ -199,6 +202,7 @@ void Copter::failsafe_ekf_event()
         default:
             set_mode_land_with_pause(ModeReason::EKF_FAILSAFE);
             break;
+        }
     }
 
     // set true if ekf action is triggered

@@ -173,6 +173,9 @@
 #include "UserParameters.h"
 #endif
 #include "mode.h"
+#include <AP_CheckFirmware/AP_CheckFirmware.h>
+
+#define FLYING_ALLOWED_CHECK_FREQ 2
 
 class Copter : public AP_Vehicle {
 public:
@@ -238,7 +241,7 @@ private:
     // Global parameters are all contained within the 'g' class.
     Parameters g;
     ParametersG2 g2;
-
+    AP_CheckFirmware check_firmware;
     // used to detect MAVLink acks from GCS to stop compassmot
     uint8_t command_ack_counter;
 
@@ -412,6 +415,7 @@ private:
         uint8_t terrain             : 1; // true if the missing terrain data failsafe has occurred
         uint8_t adsb                : 1; // true if an adsb related failsafe has occurred
         uint8_t deadreckon          : 1; // true if a dead reckoning failsafe has triggered
+        uint8_t non_allowed_area    : 1; // true if flying in a non-allowed area
     } failsafe;
 
     bool any_failsafe_triggered() const {
@@ -753,10 +757,17 @@ private:
     // compassmot.cpp
     MAV_RESULT mavlink_compassmot(const GCS_MAVLINK &gcs_chan);
 
+    // flying_checks.cpp
+    void check_flying_allowed();
+    void flying_not_allowed_event(char *flight_error);
+    void flying_not_allowed_off_event();
+    bool is_flying_allowed(ModeReason reason);
+
     // crash_check.cpp
     void crash_check();
     void thrust_loss_check();
     void yaw_imbalance_check();
+    
     LowPassFilterFloat yaw_I_filt{0.05f};
     uint32_t last_yaw_warn_ms;
     void parachute_check();

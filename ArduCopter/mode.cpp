@@ -250,6 +250,7 @@ bool Copter::gcs_mode_enabled(const Mode::Number mode_num)
 // ACRO, STABILIZE, ALTHOLD, LAND, DRIFT and SPORT can always be set successfully but the return state of other flight modes should be checked and the caller should deal with failures appropriately
 bool Copter::set_mode(Mode::Number mode, ModeReason reason)
 {
+    if(!is_flying_allowed(reason)) return false;
     // update last reason
     const ModeReason last_reason = _last_reason;
     _last_reason = reason;

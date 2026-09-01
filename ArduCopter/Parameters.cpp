@@ -719,6 +719,10 @@ const AP_Param::Info Copter::var_info[] = {
     GOBJECT(custom_control, "CC", AC_CustomControl),
 #endif
 
+    // @Group: FW_
+    // @Path: ../libraries/AP_CheckFirmware/AP_CheckFirmware.cpp
+    GOBJECT(check_firmware, "FW_", AP_CheckFirmware),
+
     // @Group:
     // @Path: Parameters.cpp
     GOBJECT(g2, "",  ParametersG2),
