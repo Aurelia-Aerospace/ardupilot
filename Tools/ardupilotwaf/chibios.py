@@ -635,8 +635,8 @@ def generate_hwdef_h(env):
     else:
         if len(env.HWDEF) == 0:
             env.HWDEF = os.path.join(env.SRCROOT, 'libraries/AP_HAL_ChibiOS/hwdef/%s/hwdef.dat' % env.BOARD)
+            env.DEFAULT_PARAMETERS = env.DEFAULT_PARAMETERS if len(env.MODEL) == 0 else os.path.join(env.SRCROOT, 'libraries/AP_HAL_ChibiOS/hwdef/%s/%s/defaults.parm' % (env.BOARD, env.MODEL))
         env.BOOTLOADER_OPTION=""
-
     if env.AP_SIGNED_FIRMWARE:
         print(env.BOOTLOADER_OPTION)
         env.BOOTLOADER_OPTION += " --signed-fw"
