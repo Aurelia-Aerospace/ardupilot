@@ -146,6 +146,11 @@ def options(opt):
         default=None,
         help='Target board to build, choices are %s.' % ', '.join(boards_names))
 
+    g.add_option('--model',
+        action='store',
+        default=None,
+        help='Target model to build, choices are X4, X6, X6-MAX, X6-PRO-V2, X8, X8-MAX')
+
     g.add_option('--debug',
         action='store_true',
         default=False,
@@ -496,6 +501,7 @@ def configure(cfg):
         cfg.options.enable_check_firmware = True
 
     cfg.env.BOARD = cfg.options.board
+    cfg.env.MODEL = cfg.options.model
     cfg.env.DEBUG = cfg.options.debug
     cfg.env.DEBUG_SYMBOLS = cfg.options.debug_symbols
     cfg.env.COVERAGE = cfg.options.coverage
