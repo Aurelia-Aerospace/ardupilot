@@ -91,13 +91,35 @@ void AP_RangeFinder_PulsedLightLRF::timer(void)
         // read the high and low byte distance registers
         if (_dev->read_registers(LL40LS_DISTHIGH_REG | LL40LS_AUTO_INCREMENT, (uint8_t*)&val, sizeof(val))) {
             uint16_t _distance_cm = be16toh(val);
-            // remove momentary spikes
-            if (abs(_distance_cm - last_distance_cm) < 100) {
+            const uint16_t max_dist_cm = uint16_t(max_distance_cm());
+            const uint16_t min_dist_cm = uint16_t(min_distance_cm());
+
+            // Detect known LidarLite out-of-range artifact:
+            // when the target is beyond max range, the sensor reports
+            // abnormally low values (typically 1 cm).
+            // Condition: previous reading was near max range and new reading dropped below min
+            const bool looks_like_oor_high =
+                (_distance_cm < min_dist_cm) &&
+                (last_distance_cm > (max_dist_cm - max_dist_cm / 5));  // >80% of maximum
+
+            const uint32_t now = AP_HAL::millis();
+
+            if (looks_like_oor_high) {
+                // out-of-range artifact: explicitly report OutOfRangeHigh
+                state.last_reading_ms = now;
+                set_status(RangeFinder::Status::OutOfRangeHigh);
+                // do not update last_distance_cm — preserve valid baseline
+            } else if (abs((int)_distance_cm - (int)last_distance_cm) < 100) {
                 state.distance_m = _distance_cm * 0.01f;
-                state.last_reading_ms = AP_HAL::millis();
-                update_status();                
+                state.last_reading_ms = now;
+                update_status();
+                last_distance_cm = _distance_cm;  // only update baseline with reliable data
+            } else {
+                // if stuck for too long, reset baseline to allow recovery
+                if (now - state.last_reading_ms > 100) {
+                    last_distance_cm = _distance_cm;
+                }
             }
-            last_distance_cm = _distance_cm;
         } else {
             set_status(RangeFinder::Status::NoData);
         }
