@@ -57,6 +57,10 @@
 #define ODID_AREA_COUNT_MIN  1
 #define ODID_AREA_COUNT_MAX  65000
 
+#define INITIALIZING_MODULE 254
+#define ACK_MESSAGES_THR 3
+#define LOST_TX_MESSAGES_THR 3
+
 class AP_DroneCAN;
 
 class AP_OpenDroneID
@@ -73,6 +77,7 @@ public:
     void init();
     bool pre_arm_check(char* failmsg, uint8_t failmsg_len);
     void update();
+    void update_ota();
 
     // send pending dronecan messages
     void dronecan_send(AP_DroneCAN *);
@@ -84,7 +89,19 @@ public:
         return _enable != 0;
     }
 
-    void set_arm_status(mavlink_open_drone_id_arm_status_t &status);
+    void set_arm_status(mavlink_aurelia_odid_status_t &status, uint8_t node_id, uint8_t driver_index);
+    void set_auth_response(uint8_t node_id, const uint8_t *sig, uint8_t sig_len);
+    bool set_rid_public_key(const uint8_t key[32]);
+    bool get_rid_public_key(uint8_t key[32]) const;
+    void request_generate_rid_key();
+    bool send_ota_chunk(uint8_t flags, uint32_t offset, const uint8_t *data, uint8_t data_len);
+    uint8_t get_odid_status(){
+        return arm_status.status;
+    }
+
+    char *get_odid_error(){
+        return arm_status.error;
+    }
 
     void set_basic_id();
 
@@ -118,6 +135,11 @@ private:
         LockUASIDOnFirstBasicIDRx = (1U << 2U),
     };
 
+    //Ensure sending takeoff location as system location
+    int32_t latitude_takeoff;
+    int32_t longitude_takeoff;
+    float altitude_geodetic_takeoff;
+
     // check if an option is set
     bool option_enabled(const Options option) const
     {
@@ -130,7 +152,7 @@ private:
     uint32_t _last_send_system_update_ms;
     uint32_t _last_send_static_messages_ms;
     const uint32_t _mavlink_dynamic_period_ms = 1000; //how often are mavlink dynamic messages sent in ms. E.g. 1000 = 1 Hz
-    const uint32_t _mavlink_static_period_ms = 3000; //how often are mavlink static messages sent in ms
+    const uint32_t _mavlink_static_period_ms = 500; //how often are mavlink static messages sent in ms
 
     bool     _have_height_above_takeoff;
     Location _takeoff_location;
@@ -143,7 +165,6 @@ private:
     mavlink_open_drone_id_system_t pkt_system;
     mavlink_open_drone_id_self_id_t pkt_self_id;
     mavlink_open_drone_id_operator_id_t pkt_operator_id;
-
     // last time we got a SYSTEM message
     uint32_t last_system_ms;
 
@@ -151,7 +172,7 @@ private:
     uint32_t last_system_update_ms;
 
     // arm status from the transmitter
-    mavlink_open_drone_id_arm_status_t arm_status;
+    mavlink_aurelia_odid_status_t arm_status;
     uint32_t last_arm_status_ms;
 
     // last time we sent a lost transmitter message
@@ -164,6 +185,7 @@ private:
     void send_dynamic_out();
     void send_static_out();
     void send_basic_id_message();
+    void prepare_system_message();
     void send_system_message();
     void send_system_update_message();
     void send_self_id_message();
@@ -197,6 +219,16 @@ private:
     uint8_t need_send_system;
     uint8_t need_send_self_id;
     uint8_t need_send_operator_id;
+    uint8_t need_send_auth_challenge;
+    uint8_t need_send_generate_key;
+    uint8_t need_send_ota_chunk;
+    struct {
+        uint8_t flags;
+        uint32_t offset;
+        uint8_t data[215];
+        uint8_t len;
+        uint32_t t_queued_us;  // timestamp when GCS set need_send_ota_chunk
+    } _ota_chunk;
 
     uint8_t dronecan_done_init;
     uint8_t dronecan_init_failed;
@@ -206,6 +238,18 @@ private:
     void dronecan_send_system(AP_DroneCAN *uavcan);
     void dronecan_send_self_id(AP_DroneCAN *uavcan);
     void dronecan_send_operator_id(AP_DroneCAN *uavcan);
+    void dronecan_send_auth_challenge(AP_DroneCAN *uavcan);
+    void dronecan_send_generate_key(AP_DroneCAN *uavcan);
+    void dronecan_send_ota_chunk(AP_DroneCAN *uavcan);
+
+    void set_missing_status();
+
+    uint8_t lost_tx_count;
+    bool _rid_authenticated;
+    uint8_t _auth_nonce[32];
+    uint32_t _auth_challenge_sent_ms;
+    uint8_t _pending_auth_node_id;
+    uint8_t flying_allowed_device_node_id;
 };
 
 namespace AP

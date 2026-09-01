@@ -33,6 +33,7 @@
 
 #include "AP_OpenDroneID.h"
 #include <AP_HAL/AP_HAL.h>
+#include <StorageManager/StorageManager.h>
 #include <GCS_MAVLink/GCS.h>
 #include <AP_GPS/AP_GPS.h>
 #include <AP_Baro/AP_Baro.h>
@@ -40,8 +41,10 @@
 #include <AP_Parachute/AP_Parachute.h>
 #include <AP_Vehicle/AP_Vehicle.h>
 #include <AP_DroneCAN/AP_DroneCAN.h>
+#include <AP_CheckFirmware/AP_CheckFirmware.h>
 #include <stdio.h>
 #include <GCS_MAVLink/GCS.h>
+#include <AP_Stats/AP_Stats.h>
 
 extern const AP_HAL::HAL &hal;
 
@@ -105,10 +108,27 @@ void AP_OpenDroneID::init()
     if (_enable == 0) {
         return;
     }
-
+    latitude_takeoff = 0;
+    longitude_takeoff = 0;
+    altitude_geodetic_takeoff = -1000;
+    _rid_authenticated = false;
+    _pending_auth_node_id = 0;
+    lost_tx_count = 0;
+    arm_status.status = INITIALIZING_MODULE;
+    strncpy(arm_status.error, "Initializing", sizeof(arm_status.error) - 1);
     load_UAS_ID_from_persistent_memory();
     _chan = mavlink_channel_t(gcs().get_channel_from_port_number(_mav_port));
     _initialised = true;
+
+#if AP_CHECK_FIRMWARE_ENABLED && AP_SIGNED_FIRMWARE
+    AP_CheckFirmware::register_odid_callbacks({
+        .send_ota_chunk = [](uint8_t f, uint32_t o, const uint8_t *d, uint32_t l) {
+            return AP::opendroneid().send_ota_chunk(f, o, d, l);
+        },
+        .request_generate_key = []() { AP::opendroneid().request_generate_rid_key(); },
+        .get_public_key = [](uint8_t k[32]) { return AP::opendroneid().get_rid_public_key(k); },
+    });
+#endif
 }
 
 void AP_OpenDroneID::load_UAS_ID_from_persistent_memory()
@@ -122,7 +142,7 @@ void AP_OpenDroneID::load_UAS_ID_from_persistent_memory()
         if (id_len && id_type_len && ua_type_len) {
             _options.set_and_save(_options.get() & ~LockUASIDOnFirstBasicIDRx);
             _options.notify();
-            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "OpenDroneID: Locked UAS_ID: %s", id_str);
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "FLDSMDFR: Locked UAS_ID: %s", id_str);
         }
     } else {
         id_len = 0;
@@ -151,7 +171,7 @@ void AP_OpenDroneID::get_persistent_params(ExpandingString &str) const
     if ((pkt_basic_id.id_type == MAV_ODID_ID_TYPE_SERIAL_NUMBER)
         && (_options & LockUASIDOnFirstBasicIDRx)
         && id_len == 0) {
-        GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, "OpenDroneID: ID is locked as %s", pkt_basic_id.uas_id);
+        GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, "FLDSMDFR: ID is locked as %s", pkt_basic_id.uas_id);
         str.printf("DID_UAS_ID=%s\nDID_UAS_ID_TYPE=%u\nDID_UA_TYPE=%u\n", pkt_basic_id.uas_id, pkt_basic_id.id_type, pkt_basic_id.ua_type);
     }
 }
@@ -170,33 +190,8 @@ bool AP_OpenDroneID::pre_arm_check(char* failmsg, uint8_t failmsg_len)
         strncpy(failmsg, "DID_ENABLE must be 1", failmsg_len);
         return false;
     }
-
-    if (pkt_basic_id.id_type == MAV_ODID_ID_TYPE_NONE) {
-        strncpy(failmsg, "UA_TYPE required in BasicID", failmsg_len);
-        return false;
-    }
-
-    if (pkt_system.operator_latitude == 0 && pkt_system.operator_longitude == 0) {
-        strncpy(failmsg, "operator location must be set", failmsg_len);
-        return false;
-    }
-
-    const uint32_t max_age_ms = 3000;
-    const uint32_t now_ms = AP_HAL::millis();
-
-    if (last_arm_status_ms == 0 || now_ms - last_arm_status_ms > max_age_ms) {
-        strncpy(failmsg, "ARM_STATUS not available", failmsg_len);
-        return false;
-    }
-
-    if (last_system_ms == 0 ||
-        (now_ms - last_system_ms > max_age_ms &&
-         (now_ms - last_system_update_ms > max_age_ms))) {
-        strncpy(failmsg, "SYSTEM not available", failmsg_len);
-        return false;
-    }
     
-    if (arm_status.status != MAV_ODID_ARM_STATUS_GOOD_TO_ARM) {
+    if (arm_status.status != MAV_AURELIA_CHECK_STATUS_GOOD_TO_ARM) {
         strncpy(failmsg, arm_status.error, failmsg_len);
         return false;
     }
@@ -247,6 +242,77 @@ void AP_OpenDroneID::update()
 #endif
 }
 
+/*
+  high-frequency OTA dispatch — runs at 400 Hz but returns immediately when no OTA is active.
+  Exists only to reduce the dispatch lag from the 10 Hz update() rate down to ~2.5 ms.
+*/
+void AP_OpenDroneID::update_ota()
+{
+#if HAL_ENABLE_DRONECAN_DRIVERS
+#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
+    // Process pending DroneCAN ACK here so the buffered last chunk is dispatched
+    // even when no further MAVLink SECURE_COMMAND arrives (script exits after last chunk).
+    if (AP_CheckFirmware::ota_dronecan_done) {
+        AP_CheckFirmware::ota_dronecan_done = false;
+
+        if (AP_CheckFirmware::ota_state == AP_CheckFirmware::OTAState::LAST_PENDING) {
+            // Forward the ESP32's validation result to the script as a SECURE_COMMAND_REPLY.
+            // The numeric values of DroneCAN result and MAVLink result are identical.
+            mavlink_secure_command_reply_t reply {};
+            reply.sequence = AP_CheckFirmware::ota_seq;
+            reply.operation = SECURE_COMMAND_OTA_CHUNK;
+            reply.result = AP_CheckFirmware::ota_dronecan_raw_result;
+            mavlink_msg_secure_command_reply_send_struct(AP_CheckFirmware::ota_chan, &reply);
+            AP_CheckFirmware::ota_state = AP_CheckFirmware::OTAState::IDLE;
+        } else if (!AP_CheckFirmware::ota_dronecan_success) {
+            AP_CheckFirmware::ota_state = AP_CheckFirmware::OTAState::IDLE;
+        } else if (AP_CheckFirmware::ota_state == AP_CheckFirmware::OTAState::DRONECAN_PENDING_BUFFERED) {
+            uint8_t f = AP_CheckFirmware::ota_pending.data[0];
+            uint32_t o;
+            memcpy(&o, &AP_CheckFirmware::ota_pending.data[1], sizeof(o));
+            if (send_ota_chunk(f, o, &AP_CheckFirmware::ota_pending.data[5],
+                               AP_CheckFirmware::ota_pending.data_length - 5)) {
+                AP_CheckFirmware::ota_state = AP_CheckFirmware::OTAState::DRONECAN_PENDING;
+            } else {
+                AP_CheckFirmware::ota_state = AP_CheckFirmware::OTAState::IDLE;
+            }
+        } else if (AP_CheckFirmware::ota_state == AP_CheckFirmware::OTAState::DRONECAN_PENDING) {
+            AP_CheckFirmware::ota_state = AP_CheckFirmware::OTAState::READY;
+        }
+    }
+#endif // AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
+
+    // If Canard silently timed out (no ACK and no done flag), retransmit the same chunk.
+    // Canard's default transfer timeout is ~1s; we retry after 2s to be safe.
+    if ((AP_CheckFirmware::ota_state == AP_CheckFirmware::OTAState::DRONECAN_PENDING ||
+         AP_CheckFirmware::ota_state == AP_CheckFirmware::OTAState::DRONECAN_PENDING_BUFFERED) &&
+        !AP_CheckFirmware::ota_dronecan_done &&
+        AP_HAL::micros() - _ota_chunk.t_queued_us > 2000000UL) {
+        need_send_ota_chunk = dronecan_send_all;
+        _ota_chunk.t_queued_us = AP_HAL::micros();
+    }
+
+    if (!need_send_ota_chunk) {
+        return;
+    }
+    uint8_t can_num_drivers = AP::can().get_num_drivers();
+    for (uint8_t i = 0; i < can_num_drivers; i++) {
+        AP_DroneCAN *dronecan = AP_DroneCAN::get_dronecan(i);
+        if (dronecan == nullptr) {
+            continue;
+        }
+        if (dronecan->get_driver_index()+1 != _can_driver) {
+            continue;
+        }
+        if (need_send_ota_chunk & driver_mask) {
+            WITH_SEMAPHORE(_sem);
+            dronecan_send_ota_chunk(dronecan);
+            need_send_ota_chunk &= ~driver_mask;
+        }
+    }
+#endif // HAL_ENABLE_DRONECAN_DRIVERS
+}
+
 // local payload space check which treats invalid channel as having space
 // needed to populate the message structures for the DroneCAN backend
 #define ODID_HAVE_PAYLOAD_SPACE(id) (_chan == MAV_CHAN_INVALID || HAVE_PAYLOAD_SPACE(_chan, id))
@@ -264,33 +330,40 @@ void AP_OpenDroneID::send_dynamic_out()
     if (now - _last_send_system_update_ms >= _mavlink_dynamic_period_ms &&
         ODID_HAVE_PAYLOAD_SPACE(OPEN_DRONE_ID_SYSTEM_UPDATE)) {
         _last_send_system_update_ms = now;
-        send_system_update_message();
+        send_system_message();
     }
+
 }
 
 void AP_OpenDroneID::send_static_out()
 {
     const uint32_t now_ms = AP_HAL::millis();
-
-    // we need to notify user if we lost the transmitter
-    if (now_ms - last_arm_status_ms > 5000) {
-        if (now_ms - last_lost_tx_ms > 5000) {
-            last_lost_tx_ms = now_ms;
-            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "ODID: lost transmitter");
+    if (option_enabled(Options::EnforceArming)) {
+        if (now_ms - last_arm_status_ms > 5000) {
+        // we need to notify user if we lost the transmitter
+            if (now_ms - last_lost_tx_ms > 5000) {
+                last_lost_tx_ms = now_ms;
+                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "FLDSMDFR: lost transmitter");
+                lost_tx_count++;
+                if (lost_tx_count >= LOST_TX_MESSAGES_THR || !hal.util->get_soft_armed()) {
+                    set_missing_status();
+                }
+            }
+        } else if (last_lost_tx_ms != 0) {
+            // we're OK again
+            last_lost_tx_ms = 0;
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "FLDSMDFR: transmitter OK");
+            lost_tx_count = 0;
         }
-    } else if (last_lost_tx_ms != 0) {
-        // we're OK again
-        last_lost_tx_ms = 0;
-        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "ODID: transmitter OK");
     }
 
-    // we need to notify user if we lost system msg with operator location
-    if (now_ms - last_system_ms > 5000 && now_ms - last_lost_operator_msg_ms > 5000) {
-        last_lost_operator_msg_ms = now_ms;
-        GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "ODID: lost operator location");
+    if (now_ms - last_arm_status_ms > 1050 && _rid_authenticated) {
+        _rid_authenticated = false;
+        // Keep _pending_auth_node_id so OTA chunks still reach the module
+        // during long operations (e.g. flash erase) that delay status messages.
     }
-    
-    const uint32_t msg_spacing_ms = _mavlink_static_period_ms / 4;
+
+    const uint32_t msg_spacing_ms = _mavlink_static_period_ms / 6;
     if (now_ms - last_msg_send_ms >= msg_spacing_ms) {
         // allow update of channel during setup, this makes it easy to debug with a GCS
         _chan = mavlink_channel_t(gcs().get_channel_from_port_number(_mav_port));
@@ -328,6 +401,14 @@ void AP_OpenDroneID::send_static_out()
             next_msg_to_send = next_msg((uint8_t(next_msg_to_send) + 1) % uint8_t(NEXT_MSG_ENUM_END));
         }
     }
+}
+
+void AP_OpenDroneID::set_missing_status() {
+    mavlink_aurelia_odid_status_t status;
+    status.status = MAV_AURELIA_CHECK_STATUS_FAIL_LOST_MODULE;
+    strncpy(status.error, "Lost connection", sizeof(status.error) - 1);
+    status.error[sizeof(status.error) - 1] = '\0';
+    arm_status = status;
 }
 
 // The send_location_message
@@ -510,9 +591,46 @@ void AP_OpenDroneID::send_basic_id_message()
 
 void AP_OpenDroneID::send_system_message()
 {
-    // note that packet is filled in by the GCS
-    need_send_system |= dronecan_send_all;
-    if (_chan != MAV_CHAN_INVALID) {
+    const auto &gps = AP::gps();
+    const AP_GPS::GPS_Status gps_status = gps.status();
+    const bool got_bad_gps_fix = (gps_status < AP_GPS::GPS_Status::GPS_OK_FIX_3D);
+    const bool armed = hal.util->get_soft_armed();
+
+    uint32_t timestamp = ODID_INV_TIMESTAMP;
+    if (!got_bad_gps_fix) {
+        timestamp = (gps.istate_time_to_epoch_ms(gps.time_week(), gps.time_week_ms()) / 1000) - 1546300800;
+    }
+
+    if (!armed) {
+        latitude_takeoff = pkt_location.latitude;
+        longitude_takeoff = pkt_location.longitude;
+        altitude_geodetic_takeoff = pkt_location.altitude_barometric;
+    }
+    {
+    WITH_SEMAPHORE(_sem);
+        // take semaphore so CAN gets a consistent packet
+        pkt_system = mavlink_open_drone_id_system_t{
+            operator_latitude : latitude_takeoff,
+            operator_longitude : longitude_takeoff,
+            area_ceiling : -1000,
+            area_floor : -1000,
+            operator_altitude_geo : altitude_geodetic_takeoff,
+            timestamp : timestamp,
+            area_count : 0,
+            area_radius : 0,
+            target_system : 0,
+            target_component : 0,
+            id_or_mac : {},
+            operator_location_type : 0, //Takeoff
+            classification_type : 0, //0 - Undeclared, 1 - European Union
+            category_eu : 0, //0 - Undeclared, 1 - Open, 2 - Specific, 3 - Certified
+            class_eu : 0 //0 - Undeclared
+        };
+        need_send_system = dronecan_send_all;
+    }
+
+    if (_chan != MAV_CHAN_INVALID)
+    {
         mavlink_msg_open_drone_id_system_send_struct(_chan, &pkt_system);
     }
 }
@@ -550,6 +668,7 @@ void AP_OpenDroneID::send_operator_id_message()
         mavlink_msg_open_drone_id_operator_id_send_struct(_chan, &pkt_operator_id);
     }
 }
+
 
 /*
 * This converts a horizontal accuracy float value to the corresponding enum
@@ -751,9 +870,9 @@ void AP_OpenDroneID::handle_msg(mavlink_channel_t chan, const mavlink_message_t 
 
     switch (msg.msgid) {
     // only accept ARM_STATUS from the transmitter
-    case MAVLINK_MSG_ID_OPEN_DRONE_ID_ARM_STATUS: {
+    case MAVLINK_MSG_ID_AURELIA_ODID_STATUS: {
         if (chan == _chan) {
-            mavlink_msg_open_drone_id_arm_status_decode(&msg, &arm_status);
+            mavlink_msg_aurelia_odid_status_decode(&msg, &arm_status);
             last_arm_status_ms = AP_HAL::millis();
         }
         break;
@@ -790,6 +909,51 @@ void AP_OpenDroneID::handle_msg(mavlink_channel_t chan, const mavlink_message_t 
         break;
     }
     }
+}
+
+bool AP_OpenDroneID::get_rid_public_key(uint8_t key[32]) const
+{
+    StorageAccess storage(StorageManager::StorageRIDKey);
+    if (storage.size() < 32 || !storage.read_block(key, 0, 32)) {
+        return false;
+    }
+    for (uint8_t i = 0; i < 32; i++) {
+        if (key[i] != 0xFF) {
+            return true;
+        }
+    }
+    return false; // all-0xFF means not provisioned
+}
+
+bool AP_OpenDroneID::set_rid_public_key(const uint8_t key[32])
+{
+    StorageAccess storage(StorageManager::StorageRIDKey);
+    return storage.size() >= 32 && storage.write_block(0, key, 32);
+}
+
+void AP_OpenDroneID::request_generate_rid_key()
+{
+    // Invalidate stored key so GET_RID_PUBLIC_KEY returns TEMPORARILY_REJECTED
+    // until the RID module responds with a fresh key over DroneCAN.
+    uint8_t ff[32];
+    memset(ff, 0xFF, sizeof(ff));
+    set_rid_public_key(ff);
+    need_send_generate_key = dronecan_send_all;
+}
+
+bool AP_OpenDroneID::send_ota_chunk(uint8_t flags, uint32_t offset, const uint8_t *data, uint8_t data_len)
+{
+    if (data_len > sizeof(_ota_chunk.data)) {
+        return false;
+    }
+    WITH_SEMAPHORE(_sem);
+    _ota_chunk.flags = flags;
+    _ota_chunk.offset = offset;
+    memcpy(_ota_chunk.data, data, data_len);
+    _ota_chunk.len = data_len;
+    _ota_chunk.t_queued_us = AP_HAL::micros();
+    need_send_ota_chunk = dronecan_send_all;
+    return true;
 }
 
 // singleton instance
