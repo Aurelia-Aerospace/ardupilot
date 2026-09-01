@@ -8,6 +8,7 @@
 
 #include "monocypher.h"
 #include <AP_Math/AP_Math.h>
+#include <AP_Param/AP_Param.h>
 
 #if HAL_GCS_ENABLED
 #include <GCS_MAVLink/GCS.h>
@@ -131,8 +132,27 @@ AP_CheckFirmware::bl_data *AP_CheckFirmware::read_bootloader(void)
 #endif
 }
 
+#if AP_OPENDRONEID_ENABLED
+AP_CheckFirmware::ODIDCallbacks AP_CheckFirmware::_odid_cbs;
+#endif
+
 #if HAL_GCS_ENABLED
 uint8_t AP_CheckFirmware::session_key[8];
+AP_CheckFirmware::OTAState AP_CheckFirmware::ota_state;
+mavlink_channel_t AP_CheckFirmware::ota_chan;
+uint32_t AP_CheckFirmware::ota_seq;
+AP_CheckFirmware::OTAPendingChunk AP_CheckFirmware::ota_pending;
+volatile bool AP_CheckFirmware::ota_dronecan_done;
+volatile bool AP_CheckFirmware::ota_dronecan_success;
+uint8_t AP_CheckFirmware::ota_dronecan_raw_result;
+
+void AP_CheckFirmware::set_ota_chunk_done(bool success)
+{
+    // Only set flags — all state transitions happen in the GCS thread
+    // to avoid races between DroneCAN thread and GCS thread on ota_state.
+    ota_dronecan_success = success;
+    ota_dronecan_done = true;
+}
 
 /*
   make a session key
@@ -265,6 +285,16 @@ bool AP_CheckFirmware::set_public_keys(uint8_t key_idx, uint8_t num_keys, const 
 }
 
 /*
+  apply runtime side-effects for secure param writes (pointer comparison, rename-safe)
+ */
+void AP_CheckFirmware::on_secure_param_write(AP_Param *vp, float value)
+{
+    if (_singleton && vp == &_singleton->_lock) {
+        AP_Param::set_params_locked(static_cast<int>(value) != 2);
+    }
+}
+
+/*
   handle a SECURE_COMMAND
  */
 void AP_CheckFirmware::handle_secure_command(mavlink_channel_t chan, const mavlink_secure_command_t &pkt)
@@ -278,6 +308,58 @@ void AP_CheckFirmware::handle_secure_command(mavlink_channel_t chan, const mavli
         reply.result = MAV_RESULT_DENIED;
         goto send_reply;
     }
+
+    // OTA_CHUNK bypasses signature check — firmware is validated by the RID module
+    if (pkt.operation == SECURE_COMMAND_OTA_CHUNK) {
+        // While waiting for the last chunk's validation result, just keep the script polling.
+        if (ota_state == OTAState::LAST_PENDING) {
+            reply.result = MAV_RESULT_TEMPORARILY_REJECTED;
+            goto send_reply;
+        }
+
+        // State transitions driven exclusively by update_ota() to avoid cross-task races.
+        if (ota_state == OTAState::IDLE) {
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        if (ota_state == OTAState::DRONECAN_PENDING_BUFFERED) {
+            reply.result = MAV_RESULT_TEMPORARILY_REJECTED;
+            goto send_reply;
+        }
+        if (pkt.data_length < 5) {
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        ota_chan = chan;
+        ota_seq = pkt.sequence;
+#if AP_OPENDRONEID_ENABLED
+        {
+            uint8_t flags = pkt.data[0];
+            const bool is_last = (flags & 0x02) != 0;
+            uint32_t offset;
+            memcpy(&offset, &pkt.data[1], sizeof(offset));
+            if (ota_state == OTAState::READY) {
+                if (_odid_cbs.send_ota_chunk && _odid_cbs.send_ota_chunk(flags, offset, &pkt.data[5], pkt.data_length - 5)) {
+                    ota_state = OTAState::DRONECAN_PENDING;
+                    // For FLAG_LAST: don't ACCEPTED yet — wait for ESP32 validation result
+                    reply.result = is_last ? MAV_RESULT_TEMPORARILY_REJECTED : MAV_RESULT_ACCEPTED;
+                } else {
+                    reply.result = MAV_RESULT_FAILED;
+                }
+            } else {
+                // DRONECAN_PENDING: buffer for dispatch when current ACK arrives
+                memcpy(ota_pending.data, pkt.data, pkt.data_length);
+                ota_pending.data_length = pkt.data_length;
+                ota_state = OTAState::DRONECAN_PENDING_BUFFERED;
+                reply.result = is_last ? MAV_RESULT_TEMPORARILY_REJECTED : MAV_RESULT_ACCEPTED;
+            }
+        }
+#else
+        reply.result = MAV_RESULT_UNSUPPORTED;
+#endif
+        goto send_reply;
+    }
+
     if (!check_signature(pkt)) {
         reply.result = MAV_RESULT_DENIED;
         goto send_reply;
@@ -349,6 +431,81 @@ void AP_CheckFirmware::handle_secure_command(mavlink_channel_t chan, const mavli
         break;
     }
 
+    case SECURE_COMMAND_GENERATE_RID_KEY: {
+#if AP_OPENDRONEID_ENABLED
+        if (_odid_cbs.request_generate_key) {
+            _odid_cbs.request_generate_key();
+        }
+        reply.result = MAV_RESULT_ACCEPTED;
+#else
+        reply.result = MAV_RESULT_UNSUPPORTED;
+#endif
+        break;
+    }
+
+    case SECURE_COMMAND_OTA_BEGIN: {
+#if AP_OPENDRONEID_ENABLED
+        if (pkt.data_length < 4) {
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        uint32_t fw_size;
+        memcpy(&fw_size, pkt.data, sizeof(fw_size));
+        if (fw_size == 0 || fw_size > 2U*1024U*1024U) {
+            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "FLDSMDFR: OTA rejected — firmware too large (%u bytes)", (unsigned)fw_size);
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        ota_state = OTAState::READY;
+        GCS_SEND_TEXT(MAV_SEVERITY_INFO, "FLDSMDFR: OTA session started (%u bytes)", (unsigned)fw_size);
+        reply.result = MAV_RESULT_ACCEPTED;
+#else
+        reply.result = MAV_RESULT_UNSUPPORTED;
+#endif
+        break;
+    }
+
+    case SECURE_COMMAND_GET_RID_PUBLIC_KEY: {
+#if AP_OPENDRONEID_ENABLED
+        uint8_t key[32];
+        if (!_odid_cbs.get_public_key || !_odid_cbs.get_public_key(key)) {
+            reply.result = MAV_RESULT_TEMPORARILY_REJECTED;
+            goto send_reply;
+        }
+        reply.data_length = 32;
+        memcpy(reply.data, key, 32);
+        reply.result = MAV_RESULT_ACCEPTED;
+#else
+        reply.result = MAV_RESULT_UNSUPPORTED;
+#endif
+        break;
+    }
+
+    case SECURE_COMMAND_SET_PARAM: {
+        // data layout: param name (16 bytes, null-padded) + float value (4 bytes LE)
+        if (pkt.data_length != AP_MAX_NAME_SIZE + 4) {
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        char name[AP_MAX_NAME_SIZE + 1] {};
+        memcpy(name, pkt.data, AP_MAX_NAME_SIZE);
+        float value;
+        memcpy(&value, &pkt.data[AP_MAX_NAME_SIZE], sizeof(float));
+
+        enum ap_var_type vtype;
+        AP_Param *vp = AP_Param::find(name, &vtype);
+        if (vp == nullptr || !vp->is_secure()) {
+            reply.result = MAV_RESULT_DENIED;
+            goto send_reply;
+        }
+        vp->authorize_secure_write();
+        vp->set_float(value, vtype);
+        vp->save(true);
+        on_secure_param_write(vp, value);
+        reply.result = MAV_RESULT_ACCEPTED;
+        break;
+    }
+
     case SECURE_COMMAND_REMOVE_PUBLIC_KEYS: {
         if (pkt.data_length != 2) {
             reply.result = MAV_RESULT_FAILED;
@@ -382,7 +539,6 @@ void AP_CheckFirmware::handle_secure_command(mavlink_channel_t chan, const mavli
     }
 
 send_reply:
-    // send reply
     mavlink_msg_secure_command_reply_send_struct(chan, &reply);
 }
 

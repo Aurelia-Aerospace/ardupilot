@@ -217,6 +217,7 @@ const app_descriptor_t *get_app_descriptor(void)
 #endif // HAL_BOOTLOADER_BUILD
 
 #if !defined(HAL_BOOTLOADER_BUILD)
+#include <AP_Param/AP_Param.h>
 extern const AP_HAL::HAL &hal;
 extern const app_descriptor_t app_descriptor;
 
@@ -229,6 +230,39 @@ void check_firmware_print(void)
                         app_descriptor.version_major,
                         app_descriptor.version_minor);
 }
+
+AP_CheckFirmware *AP_CheckFirmware::_singleton;
+
+const AP_Param::GroupInfo AP_CheckFirmware::var_info[] = {
+    // @Param: LOCK
+    // @DisplayName: Parameter lock
+    // @Description: Lock @LOCKED parameters from being changed via GCS or scripts. Set to 2 to allow changes.
+    // @Values: 1:Locked,2:Unlocked
+    // @User: Advanced
+    AP_GROUPINFO_FLAGS("LOCK", 1, AP_CheckFirmware, _lock, 1, AP_PARAM_FLAG_SECURE),
+    // @Param: SN
+    // @DisplayName: Vehicle serial number
+    // @Description: Unique serial number for this vehicle, used for audit and fleet tracking. Not transmitted over the air.
+    // @User: Advanced
+    AP_GROUPINFO("SN", 2, AP_CheckFirmware, _sn, 0),
+    AP_GROUPEND
+};
+
+AP_CheckFirmware::AP_CheckFirmware()
+{
+    _singleton = this;
+    AP_Param::setup_object_defaults(this, var_info);
+}
+
+void AP_CheckFirmware::begin()
+{
+    AP_Param::set_params_locked(_lock.get() != 2);
+}
+
+namespace AP {
+    AP_CheckFirmware *check_firmware() { return AP_CheckFirmware::get_singleton(); }
+}
+
 #endif
 
 

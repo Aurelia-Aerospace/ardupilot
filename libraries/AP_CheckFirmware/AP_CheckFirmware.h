@@ -128,15 +128,45 @@ struct PACKED ap_secure_data {
 check_fw_result_t check_good_firmware(void);
 const app_descriptor_t *get_app_descriptor(void);
 #else
+#include <AP_Param/AP_Param.h>
 void check_firmware_print(void);
 
 class AP_CheckFirmware {
 public:
+    AP_CheckFirmware();
+    void begin();
+
+    static const struct AP_Param::GroupInfo var_info[];
+    static AP_CheckFirmware *get_singleton() { return _singleton; }
+
+#if AP_OPENDRONEID_ENABLED
+    // Callbacks registered by AP_OpenDroneID to avoid a core→optional dependency
+    struct ODIDCallbacks {
+        bool (*send_ota_chunk)(uint8_t flags, uint32_t offset, const uint8_t *data, uint32_t len);
+        void (*request_generate_key)();
+        bool (*get_public_key)(uint8_t key_out[32]);
+    };
+    static void register_odid_callbacks(const ODIDCallbacks &cbs) { _odid_cbs = cbs; }
+    static ODIDCallbacks _odid_cbs;
+#endif
+
 #if HAL_GCS_ENABLED
-    // handle a message from the GCS. This is static as we don't have an AP_CheckFirmware object
     static void handle_msg(mavlink_channel_t chan, const mavlink_message_t &msg);
     static void handle_secure_command(mavlink_channel_t chan, const mavlink_secure_command_t &pkt);
     static bool check_signature(const mavlink_secure_command_t &pkt);
+    static void set_ota_chunk_done(bool success);
+    enum class OTAState : uint8_t { IDLE=0, READY, DRONECAN_PENDING, DRONECAN_PENDING_BUFFERED, LAST_PENDING };
+    static OTAState ota_state;
+    static mavlink_channel_t ota_chan;
+    static uint32_t ota_seq;
+    static volatile bool ota_dronecan_done;
+    static volatile bool ota_dronecan_success;
+    static uint8_t ota_dronecan_raw_result;
+    struct OTAPendingChunk {
+        uint8_t data[220];
+        uint8_t data_length;
+    };
+    static OTAPendingChunk ota_pending;
 #endif
     static const struct ap_secure_data *find_public_keys(void);
 
@@ -163,11 +193,19 @@ public:
     static bool set_public_keys(uint8_t key_idx, uint8_t num_keys, const uint8_t *key_data);
     static bool all_zero_keys(const struct ap_secure_data *sec_data);
     static bool check_signed_bootloader(const uint8_t *fw, uint32_t fw_size);
+    static void on_secure_param_write(AP_Param *vp, float value);
 
 private:
+    AP_Int8 _lock;
+    AP_Int32 _sn;
+    static AP_CheckFirmware *_singleton;
 #if HAL_GCS_ENABLED
     static uint8_t session_key[8];
 #endif
+};
+
+namespace AP {
+    AP_CheckFirmware *check_firmware();
 };
 
 #endif // HAL_BOOTLOADER_BUILD
