@@ -1,8 +1,11 @@
-include ../CubeOrange/hwdef.dat
+include ../CubeOrangePlus/hwdef.dat
 
 # use a different board ID, so vehicles with this installed are prevented from loading
 # the firmware without OpenDroneID enabled
-APJ_BOARD_ID 10140
+APJ_BOARD_ID 11063
+
+# PPP networking not needed for ODID variant and exceeds flash budget
+define AP_NETWORKING_BACKEND_PPP 0
 
 # enable and enforce OpenDroneID
 define AP_OPENDRONEID_ENABLED 1

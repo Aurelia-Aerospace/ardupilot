@@ -149,7 +149,7 @@ def options(opt):
     g.add_option('--model',
         action='store',
         default=None,
-        help='Target model to build, choices are X4, X6, X6-MAX, X6-PRO-V2, X8, X8-MAX')
+        help='Target model to build, choices are X4, X6, X6-MAX, X6-PRO-V2, X8, X8-MAX, X8-PRO')
 
     g.add_option('--debug',
         action='store_true',

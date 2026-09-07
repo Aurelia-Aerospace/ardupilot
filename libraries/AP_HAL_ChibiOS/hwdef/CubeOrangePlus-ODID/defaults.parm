@@ -8,10 +8,6 @@ BATT2_VOLT_MULT 12.02
 
 # enforce OpenDroneID on DroneCAN. Note that we need to lock down key parameters
 # to ensure the integrity of the RemoteID system
-# If setting persistent UAS ID at first reception of Basic ID from OEM's config tool
-# set the DID_OPTIONS to 5 , otherwise set to 1. At first reception of Basic ID, the
-# UAS ID, Type, and UA Type will be set to the value in the Basic ID message and DID_OPTIONS
-# will be set to 1.
 
 FW_LOCK 1 @SECURE
 FW_RID 0 @SECURE
