@@ -35,6 +35,7 @@
 #include <AP_Param/AP_Param.h>
 #include <GCS_MAVLink/GCS_MAVLink.h>
 #include <AP_Common/Location.h>
+#include <dronecan.remoteid.ArmStatus.h>
 
 #define ODID_ID_SIZE 20
 #define ODID_STR_SIZE 23
@@ -89,7 +90,7 @@ public:
         return _enable != 0;
     }
 
-    void set_arm_status(mavlink_aurelia_odid_status_t &status, uint8_t node_id, uint8_t driver_index);
+    void set_arm_status(const dronecan_remoteid_ArmStatus &status, uint8_t node_id, uint8_t driver_index);
     void set_auth_response(uint8_t node_id, const uint8_t *sig, uint8_t sig_len);
     bool set_rid_public_key(const uint8_t key[32]);
     bool get_rid_public_key(uint8_t key[32]) const;
@@ -100,7 +101,7 @@ public:
     }
 
     char *get_odid_error(){
-        return arm_status.error;
+        return (char*)arm_status.error.data;
     }
 
     void set_basic_id();
@@ -172,7 +173,7 @@ private:
     uint32_t last_system_update_ms;
 
     // arm status from the transmitter
-    mavlink_aurelia_odid_status_t arm_status;
+    dronecan_remoteid_ArmStatus arm_status;
     uint32_t last_arm_status_ms;
 
     // last time we sent a lost transmitter message

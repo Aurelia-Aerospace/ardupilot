@@ -115,7 +115,7 @@ void AP_OpenDroneID::init()
     _pending_auth_node_id = 0;
     lost_tx_count = 0;
     arm_status.status = INITIALIZING_MODULE;
-    strncpy(arm_status.error, "Initializing", sizeof(arm_status.error) - 1);
+    arm_status.error.len = strncpy_noterm((char*)arm_status.error.data, "Initializing", sizeof(arm_status.error.data));
     load_UAS_ID_from_persistent_memory();
     _chan = mavlink_channel_t(gcs().get_channel_from_port_number(_mav_port));
     _initialised = true;
@@ -191,8 +191,8 @@ bool AP_OpenDroneID::pre_arm_check(char* failmsg, uint8_t failmsg_len)
         return false;
     }
     
-    if (arm_status.status != MAV_AURELIA_CHECK_STATUS_GOOD_TO_ARM) {
-        strncpy(failmsg, arm_status.error, failmsg_len);
+    if (arm_status.status != DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_GOOD_TO_ARM) {
+        strncpy(failmsg, (const char*)arm_status.error.data, failmsg_len);
         return false;
     }
     
@@ -404,11 +404,8 @@ void AP_OpenDroneID::send_static_out()
 }
 
 void AP_OpenDroneID::set_missing_status() {
-    mavlink_aurelia_odid_status_t status;
-    status.status = MAV_AURELIA_CHECK_STATUS_FAIL_LOST_MODULE;
-    strncpy(status.error, "Lost connection", sizeof(status.error) - 1);
-    status.error[sizeof(status.error) - 1] = '\0';
-    arm_status = status;
+    arm_status.status = DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_LOST_MODULE;
+    arm_status.error.len = strncpy_noterm((char*)arm_status.error.data, "Lost connection", sizeof(arm_status.error.data));
 }
 
 // The send_location_message
@@ -869,15 +866,7 @@ void AP_OpenDroneID::handle_msg(mavlink_channel_t chan, const mavlink_message_t 
     WITH_SEMAPHORE(_sem);
 
     switch (msg.msgid) {
-    // only accept ARM_STATUS from the transmitter
-    case MAVLINK_MSG_ID_AURELIA_ODID_STATUS: {
-        if (chan == _chan) {
-            mavlink_msg_aurelia_odid_status_decode(&msg, &arm_status);
-            last_arm_status_ms = AP_HAL::millis();
-        }
-        break;
-    }
-    // accept other messages from the GCS
+    // accept messages from the GCS
     case MAVLINK_MSG_ID_OPEN_DRONE_ID_OPERATOR_ID:
         mavlink_msg_open_drone_id_operator_id_decode(&msg, &pkt_operator_id);
         break;

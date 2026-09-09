@@ -35,7 +35,7 @@ static Canard::Publisher<dronecan_remoteid_SelfID>* dc_self_id[HAL_MAX_CAN_PROTO
 static Canard::Publisher<dronecan_remoteid_System>* dc_system[HAL_MAX_CAN_PROTOCOL_DRIVERS];
 static Canard::Publisher<dronecan_remoteid_OperatorID>* dc_operator_id[HAL_MAX_CAN_PROTOCOL_DRIVERS];
 
-static void handle_arm_status(AP_DroneCAN* ap_dronecan, const CanardRxTransfer &transfer, const dronecan_aurelia_remoteid_Status &msg);
+static void handle_arm_status(AP_DroneCAN* ap_dronecan, const CanardRxTransfer &transfer, const dronecan_remoteid_ArmStatus &msg);
 
 struct SecureCmdAuthCtx {
     static void auth_cb(AP_OpenDroneID *self, const CanardRxTransfer &transfer,
@@ -424,18 +424,14 @@ void AP_OpenDroneID::dronecan_send_operator_id(AP_DroneCAN *uavcan)
 }
 
 /*
-  handle Status message from DroneCAN
+  handle ArmStatus message from DroneCAN
  */
-static void handle_arm_status(AP_DroneCAN *ap_dronecan, const CanardRxTransfer &transfer, const dronecan_aurelia_remoteid_Status &msg)
+static void handle_arm_status(AP_DroneCAN *ap_dronecan, const CanardRxTransfer &transfer, const dronecan_remoteid_ArmStatus &msg)
 {
-    mavlink_aurelia_odid_status_t status {};
-    status.status = msg.status;
-    strncpy_noterm((char*)status.error, (const char*)msg.error.data, sizeof(status.error));
-    gcs().send_to_active_channels(MAVLINK_MSG_ID_AURELIA_ODID_STATUS, (const char *)&status);
-    AP::opendroneid().set_arm_status(status, transfer.source_node_id, ap_dronecan->get_driver_index());
+    AP::opendroneid().set_arm_status(msg, transfer.source_node_id, ap_dronecan->get_driver_index());
 }
 
-void AP_OpenDroneID::set_arm_status(mavlink_aurelia_odid_status_t &status, uint8_t node_id, uint8_t driver_index)
+void AP_OpenDroneID::set_arm_status(const dronecan_remoteid_ArmStatus &status, uint8_t node_id, uint8_t driver_index)
 {
     last_arm_status_ms = AP_HAL::millis();
     if (_rid_authenticated && flying_allowed_device_node_id == node_id) {
