@@ -9,9 +9,9 @@ void Copter::check_flying_allowed()
     auto &odid = AP::opendroneid();
     uint8_t flight_status = odid.get_odid_status();
     char *flight_error = odid.get_odid_error();
-    if (flight_status == MAV_AURELIA_CHECK_STATUS_FAIL_FLYING_NOT_ALLOWED ||
-        flight_status == MAV_AURELIA_CHECK_STATUS_FAIL_GPS ||
-        flight_status == MAV_AURELIA_CHECK_STATUS_FAIL_LOST_MODULE) {
+    if (flight_status == DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_FLYING_NOT_ALLOWED ||
+        flight_status == DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_GPS ||
+        flight_status == DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_LOST_MODULE) {
         if (fail_counter >= MAX_FA_CHECK_FAIL) {
             flying_not_allowed_event(flight_error);
         }
