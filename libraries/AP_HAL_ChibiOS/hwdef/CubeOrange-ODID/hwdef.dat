@@ -6,3 +6,4 @@ APJ_BOARD_ID 10140
 
 # enable and enforce OpenDroneID
 define AP_OPENDRONEID_ENABLED 1
+define AP_CUSTOM_FIRMWARE_STRING "Aurelia V4.0.0"
