@@ -1,0 +1,21 @@
+#!/usr/bin/env python
+# encoding: utf-8
+
+def build(bld):
+    if not bld.env.HAS_GTEST:
+        return
+
+    features = ['test'] if bld.cmd == 'check' else []
+
+    bld.ap_program(
+        features=features,
+        source=['test_oor_filter.cpp'],
+        use=['ap', 'GTEST'],
+        includes=[bld.srcnode.abspath() + '/tests/'],
+        program_name='test_oor_filter',
+        program_groups='tests',
+        use_legacy_defines=False,
+        vehicle_binary=False,
+        # GCC 16 fires -Werror=maybe-uninitialized on AP_PARAM macros in upstream libs
+        cxxflags=['-Wno-undef', '-Wno-maybe-uninitialized', '-Wno-sign-compare'],
+    )
