@@ -24,6 +24,9 @@
 #include "GCS.h"
 #include <AP_Logger/AP_Logger.h>
 #include <AP_BoardConfig/AP_BoardConfig.h>
+#include "../AP_Param/DefaultValues.h"
+#include <array>
+#include <map>
 
 extern const AP_HAL::HAL& hal;
 
