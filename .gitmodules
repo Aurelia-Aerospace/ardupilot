@@ -6,7 +6,7 @@
 	url = https://github.com/google/benchmark.git
 [submodule "modules/mavlink"]
 	path = modules/mavlink
-	url = https://github.com/ArduPilot/mavlink
+	url = https://github.com/Aurelia-Aerospace/mavlink
 [submodule "gtest"]
 	path = modules/gtest
 	url = https://github.com/ArduPilot/googletest
@@ -18,7 +18,7 @@
 	url = https://github.com/ArduPilot/gsoap
 [submodule "modules/DroneCAN/DSDL"]
 	path = modules/DroneCAN/DSDL
-	url = https://github.com/DroneCAN/DSDL.git
+	url = https://github.com/Aurelia-Aerospace/DSDL
 [submodule "modules/CrashDebug"]
 	path = modules/CrashDebug
 	url = https://github.com/ardupilot/CrashDebug
