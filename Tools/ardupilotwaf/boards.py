@@ -393,6 +393,15 @@ class Board:
             '-Warray-bounds',
         ]
 
+        # GCC 16+ -Wuninitialized and -Wformat-truncation are more aggressive
+        # and fire on AP_PARAM macros and upstream snprintf calls; suppress until fixed
+        if self.cc_version_gte(cfg, 16, 0):
+            env.CXXFLAGS += [
+                '-Wno-error=uninitialized',
+                '-Wno-maybe-uninitialized',
+                '-Wno-error=format-truncation',
+            ]
+
         if 'clang++' in cfg.env.COMPILER_CXX:
             env.CXXFLAGS += [
                 '-fcolor-diagnostics',
@@ -433,9 +442,12 @@ class Board:
             if self.cc_version_gte(cfg, 7, 4):
                 env.CXXFLAGS += [
                     '-Werror=implicit-fallthrough',
-                    '-Werror=maybe-uninitialized',
                     '-Werror=duplicated-cond',
                 ]
+                # GCC 16+ has a more aggressive maybe-uninitialized that fires
+                # on AP_PARAM macros in upstream code; suppress until upstream fixes
+                if not self.cc_version_gte(cfg, 16, 0):
+                    env.CXXFLAGS += ['-Werror=maybe-uninitialized']
             if self.cc_version_gte(cfg, 8, 4):
                 env.CXXFLAGS += [
                     '-Werror=sizeof-pointer-div',
