@@ -111,6 +111,10 @@ struct AP_Param::param_override *AP_Param::param_overrides;
 uint16_t AP_Param::param_overrides_len;
 uint16_t AP_Param::num_param_overrides;
 uint16_t AP_Param::num_read_only;
+uint16_t AP_Param::num_locked;
+uint16_t AP_Param::num_secure;
+const AP_Param *AP_Param::_secure_write_authorized;
+bool AP_Param::_params_locked;
 
 // goes true if we run out of param space
 bool AP_Param::eeprom_full;
@@ -1405,7 +1409,7 @@ bool AP_Param::configured_in_storage(void) const
     return scan(&phdr, &ofs) && (phdr.type == AP_PARAM_VECTOR3F || idx == 0);
 }
 
-bool AP_Param::configured_in_defaults_file(bool &read_only) const
+bool AP_Param::configured_in_defaults_file(bool &read_only, bool flag) const
 {
     if (num_param_overrides == 0) {
         return false;
@@ -1422,7 +1426,7 @@ bool AP_Param::configured_in_defaults_file(bool &read_only) const
 
     for (uint16_t i=0; i<num_param_overrides; i++) {
         if (this == param_overrides[i].object_ptr) {
-            read_only = param_overrides[i].read_only;
+            read_only = flag?param_overrides[i].locked:param_overrides[i].read_only;
             return true;
         }
     }
@@ -1465,6 +1469,54 @@ bool AP_Param::allow_set_via_mavlink(uint16_t flags) const
     }
 
     return true;
+}
+
+bool AP_Param::is_locked(void) const
+{
+    if (num_locked == 0) {
+        return false;
+    }
+    bool locked;
+    if (configured_in_defaults_file(locked, true)) {
+        return locked;
+    }
+    return false;
+}
+
+bool AP_Param::is_secure(void) const
+{
+    // compile-time flag takes priority — cannot be removed without recompiling
+    uint32_t group_element = 0;
+    const struct GroupInfo *ginfo;
+    struct GroupNesting group_nesting {};
+    uint8_t idx;
+    const struct Info *info = find_var_info(&group_element, ginfo, group_nesting, &idx);
+    if (info != nullptr) {
+        const uint16_t flags = (ginfo != nullptr) ? ginfo->flags : info->flags;
+        if (flags & AP_PARAM_FLAG_SECURE) {
+            return true;
+        }
+    }
+    // runtime: defaults file @SECURE
+    if (num_secure == 0) {
+        return false;
+    }
+    for (uint16_t i = 0; i < num_param_overrides; i++) {
+        if (this == param_overrides[i].object_ptr) {
+            return param_overrides[i].secure;
+        }
+    }
+    return false;
+}
+
+void AP_Param::authorize_secure_write(void)
+{
+    _secure_write_authorized = this;
+}
+
+void AP_Param::set_params_locked(bool locked)
+{
+    _params_locked = locked;
 }
 
 // set a AP_Param variable to a specified value
@@ -2224,6 +2276,16 @@ bool AP_Param::_convert_parameter_width(ap_var_type old_ptype, float scale_facto
  */
 void AP_Param::set_float(float value, enum ap_var_type var_type)
 {
+    if (is_secure()) {
+        if (_secure_write_authorized != this) {
+            return;
+        }
+        _secure_write_authorized = nullptr;
+    }
+    if (is_locked() && _params_locked) {
+        return;
+    }
+
     if (isnan(value) || isinf(value)) {
         return;
     }
@@ -2258,7 +2320,7 @@ void AP_Param::set_float(float value, enum ap_var_type var_type)
 /*
   parse a parameter file line
  */
-bool AP_Param::parse_param_line(char *line, char **vname, float &value, bool &read_only)
+bool AP_Param::parse_param_line(char *line, char **vname, float &value, bool &read_only, bool &locked, bool &secure)
 {
     if (line[0] == '#') {
         return false;
@@ -2295,8 +2357,20 @@ bool AP_Param::parse_param_line(char *line, char **vname, float &value, bool &re
     const char *flags_s = strtok_r(nullptr, ", =\t\r\n", &saveptr);
     if (flags_s && strcmp(flags_s, "@READONLY") == 0) {
         read_only = true;
+        locked = false;
+        secure = false;
+    } else if (flags_s && strcmp(flags_s, "@LOCKED") == 0) {
+        read_only = false;
+        locked = true;
+        secure = false;
+    } else if (flags_s && strcmp(flags_s, "@SECURE") == 0) {
+        read_only = false;
+        locked = false;
+        secure = true;
     } else {
         read_only = false;
+        locked = false;
+        secure = false;
     }
 
     return true;
@@ -2322,7 +2396,9 @@ bool AP_Param::count_defaults_in_file(const char *filename, uint16_t &num_defaul
         char *pname;
         float value;
         bool read_only;
-        if (!parse_param_line(line, &pname, value, read_only)) {
+        bool locked;
+        bool secure;
+        if (!parse_param_line(line, &pname, value, read_only, locked, secure)) {
             continue;
         }
         enum ap_var_type var_type;
@@ -2351,7 +2427,9 @@ bool AP_Param::read_param_defaults_file(const char *filename, bool last_pass, ui
         char *pname;
         float value;
         bool read_only;
-        if (!parse_param_line(line, &pname, value, read_only)) {
+        bool locked;
+        bool secure;
+        if (!parse_param_line(line, &pname, value, read_only, locked, secure)) {
             continue;
         }
         enum ap_var_type var_type;
@@ -2376,8 +2454,16 @@ bool AP_Param::read_param_defaults_file(const char *filename, bool last_pass, ui
         param_overrides[idx].object_ptr = vp;
         param_overrides[idx].value = value;
         param_overrides[idx].read_only = read_only;
+        param_overrides[idx].locked = locked;
+        param_overrides[idx].secure = secure;
         if (read_only) {
             num_read_only++;
+        }
+        if (locked) {
+            num_locked++;
+        }
+        if (secure) {
+            num_secure++;
         }
         idx++;
         if (!vp->configured_in_storage()) {
@@ -2421,6 +2507,8 @@ bool AP_Param::load_defaults_file(const char *filename, bool last_pass)
     param_overrides_len = 0;
     num_param_overrides = 0;
     num_read_only = 0;
+    num_locked = 0;
+    num_secure = 0;
 
     param_overrides = NEW_NOTHROW param_override[num_defaults];
     if (param_overrides == nullptr) {
@@ -2468,6 +2556,7 @@ bool AP_Param::count_param_defaults(const volatile char *ptr, int32_t length, ui
         char *pname;
         float value;
         bool read_only;
+        bool locked;
         uint16_t i;
         uint16_t n = length;
         for (i=0;i<n;i++) {
@@ -2487,7 +2576,8 @@ bool AP_Param::count_param_defaults(const volatile char *ptr, int32_t length, ui
             continue;
         }
 
-        if (!parse_param_line(line, &pname, value, read_only)) {
+        bool secure;
+        if (!parse_param_line(line, &pname, value, read_only, locked, secure)) {
             continue;
         }
 
@@ -2511,6 +2601,8 @@ void AP_Param::load_param_defaults(const volatile char *ptr, int32_t length, boo
     param_overrides_len = 0;
     num_param_overrides = 0;
     num_read_only = 0;
+    num_locked = 0;
+    num_secure = 0;
 
     uint16_t num_defaults = 0;
     if (!count_param_defaults(ptr, length, num_defaults)) {
@@ -2532,6 +2624,7 @@ void AP_Param::load_param_defaults(const volatile char *ptr, int32_t length, boo
         char *pname;
         float value;
         bool read_only;
+        bool locked;
         uint16_t i;
         uint16_t n = length;
         for (i=0;i<n;i++) {
@@ -2550,8 +2643,9 @@ void AP_Param::load_param_defaults(const volatile char *ptr, int32_t length, boo
         if (line[0] == '#' || line[0] == 0) {
             continue;
         }
-        
-        if (!parse_param_line(line, &pname, value, read_only)) {
+
+        bool secure;
+        if (!parse_param_line(line, &pname, value, read_only, locked, secure)) {
             continue;
         }
         enum ap_var_type var_type;
@@ -2571,8 +2665,16 @@ void AP_Param::load_param_defaults(const volatile char *ptr, int32_t length, boo
         param_overrides[idx].object_ptr = vp;
         param_overrides[idx].value = value;
         param_overrides[idx].read_only = read_only;
+        param_overrides[idx].locked = locked;
+        param_overrides[idx].secure = secure;
         if (read_only) {
             num_read_only++;
+        }
+        if (locked) {
+            num_locked++;
+        }
+        if (secure) {
+            num_secure++;
         }
         idx++;
         if (!vp->configured_in_storage()) {
@@ -2763,6 +2865,12 @@ bool AP_Param::set_by_name(const char *name, float value)
     if (vp == nullptr) {
         return false;
     }
+    if (vp->is_secure()) {
+        return false;
+    }
+    if (vp->is_locked() && _params_locked) {
+        return false;
+    }
     switch (vtype) {
     case AP_PARAM_INT8:
         ((AP_Int8 *)vp)->set(value);
@@ -2824,6 +2932,12 @@ bool AP_Param::set_and_save_by_name(const char *name, float value)
     enum ap_var_type vtype;
     AP_Param *vp = find(name, &vtype);
     if (vp == nullptr) {
+        return false;
+    }
+    if (vp->is_secure()) {
+        return false;
+    }
+    if (vp->is_locked() && _params_locked) {
         return false;
     }
     switch (vtype) {

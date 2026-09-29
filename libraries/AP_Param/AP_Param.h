@@ -104,13 +104,16 @@
 // Default value is a "pointer" actually its a offest from the base value, but the idea is the same
 #define AP_PARAM_FLAG_DEFAULT_POINTER (1<<7)
 
+// parameter can only be written via SECURE_COMMAND_SET_PARAM with a valid Ed25519 signature
+#define AP_PARAM_FLAG_SECURE (1<<8)
+
 // keep all flags before the FRAME tags
 
 // vehicle and frame type flags, used to hide parameters when not
 // relevent to a vehicle type. Use AP_Param::set_frame_type_flags() to
 // enable parameters flagged in this way. frame type flags are stored
 // in flags field, shifted by AP_PARAM_FRAME_TYPE_SHIFT.
-#define AP_PARAM_FRAME_TYPE_SHIFT   8
+#define AP_PARAM_FRAME_TYPE_SHIFT   9
 
 // supported frame types for parameters
 #define AP_PARAM_FRAME_COPTER       (1<<0)
@@ -566,6 +569,18 @@ public:
     // return true if the parameter is read-only
     bool is_read_only(void) const;
 
+    // return true if the parameter is locked
+    bool is_locked(void) const;
+
+    // return true if the parameter requires a signed SECURE_COMMAND to be written
+    bool is_secure(void) const;
+
+    // authorize the next write to this @SECURE parameter (called by SECURE_COMMAND handler)
+    void authorize_secure_write(void);
+
+    // set global lock state for @LOCKED parameters (called by AP_CheckFirmware::begin() and SECURE_COMMAND handler)
+    static void set_params_locked(bool locked);
+
     // return the persistent top level key for the ParamToken key
     static uint16_t get_persistent_key(uint16_t key) { return var_info(key).key; }
 
@@ -771,7 +786,7 @@ private:
     static float get_default_value(const AP_Param *object_ptr, const struct GroupInfo &info);
     static float get_default_value(const AP_Param *object_ptr, const struct Info &info);
 
-    static bool parse_param_line(char *line, char **vname, float &value, bool &read_only);
+    static bool parse_param_line(char *line, char **vname, float &value, bool &read_only, bool &locked, bool &secure);
 
     /*
       load a parameter defaults file. This happens as part of load_all()
@@ -795,7 +810,7 @@ private:
     static void load_embedded_param_defaults(bool last_pass);
 
     // return true if the parameter is configured in the defaults file
-    bool configured_in_defaults_file(bool &read_only) const;
+    bool configured_in_defaults_file(bool &read_only, bool flag = false) const;
 
     // return true if the parameter is configured in EEPROM/FRAM
     bool configured_in_storage(void) const;
@@ -841,11 +856,17 @@ private:
         const AP_Param *object_ptr;
         float value;
         bool read_only; // param is marked @READONLY
+        bool locked; // param is marked @LOCKED
+        bool secure; // param is marked @SECURE
     };
     static struct param_override *param_overrides;
     static uint16_t num_param_overrides;
     static uint16_t param_overrides_len;
     static uint16_t num_read_only;
+    static uint16_t num_locked;
+    static uint16_t num_secure;
+    static const AP_Param *_secure_write_authorized;
+    static bool _params_locked;
 
     // values filled into the EEPROM header
     static const uint8_t        k_EEPROM_magic0      = 0x50;
