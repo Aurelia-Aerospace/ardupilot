@@ -323,6 +323,12 @@ void AP_Vehicle::setup()
     AP_Param::check_var_info();
     load_parameters();
 
+#if AP_CHECK_FIRMWARE_ENABLED
+    if (AP_CheckFirmware::get_singleton() != nullptr) {
+        AP_CheckFirmware::get_singleton()->begin();
+    }
+#endif
+
 #if CONFIG_HAL_BOARD == HAL_BOARD_CHIBIOS
     if (AP_BoardConfig::get_sdcard_slowdown() != 0) {
         // user wants the SDcard slower, we need to remount
@@ -639,6 +645,7 @@ const AP_Scheduler::Task AP_Vehicle::scheduler_tasks[] = {
 #endif
 #if AP_OPENDRONEID_ENABLED
     SCHED_TASK_CLASS(AP_OpenDroneID, &vehicle.opendroneid,  update,                   10,  50, 236),
+    SCHED_TASK_CLASS(AP_OpenDroneID, &vehicle.opendroneid,  update_ota,              400,  20, 237),
 #endif
 #if AP_NETWORKING_ENABLED
     SCHED_TASK_CLASS(AP_Networking, &vehicle.networking,    update,                   10,  50, 238),
