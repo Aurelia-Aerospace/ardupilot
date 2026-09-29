@@ -85,6 +85,9 @@ bool Parameter::set(float value)
     if (vp == nullptr) {
         return false;
     }
+    if (vp->is_secure()) {
+        return false;
+    }
     switch (vtype) {
     case AP_PARAM_INT8:
         ((AP_Int8 *)vp)->set(value);
@@ -138,6 +141,9 @@ bool Parameter::get(float &value)
 bool Parameter::set_and_save(float value)
 {
     if (vp == nullptr) {
+        return false;
+    }
+    if (vp->is_secure()) {
         return false;
     }
     switch (vtype) {
