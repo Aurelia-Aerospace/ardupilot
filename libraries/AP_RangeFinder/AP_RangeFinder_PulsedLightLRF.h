@@ -23,6 +23,19 @@ class AP_RangeFinder_PulsedLightLRF : public AP_RangeFinder_Backend
 {
 
 public:
+    struct CollectResult {
+        RangeFinder::Status status;
+        uint16_t last_distance_cm;
+        uint32_t last_reading_ms;
+        float    distance_m;
+    };
+    static CollectResult process_distance_reading(uint16_t reading_cm,
+                                                   uint16_t last_distance_cm,
+                                                   uint32_t last_reading_ms,
+                                                   uint16_t max_dist_cm,
+                                                   uint16_t min_dist_cm,
+                                                   uint32_t now);
+
     // static detection function
     static AP_RangeFinder_Backend *detect(uint8_t bus,
                                           RangeFinder::RangeFinder_State &_state,
@@ -49,7 +62,7 @@ private:
     bool init(void);
     void timer(void);
     bool lidar_transfer(const uint8_t *send, unsigned send_len, uint8_t *recv, unsigned recv_len);
-    
+
     AP_HAL::OwnPtr<AP_HAL::I2CDevice> _dev;
 
     uint8_t sw_version;

@@ -90,35 +90,21 @@ void AP_RangeFinder_PulsedLightLRF::timer(void)
         be16_t val;
         // read the high and low byte distance registers
         if (_dev->read_registers(LL40LS_DISTHIGH_REG | LL40LS_AUTO_INCREMENT, (uint8_t*)&val, sizeof(val))) {
-            uint16_t _distance_cm = be16toh(val);
-            const uint16_t max_dist_cm = uint16_t(max_distance_cm());
-            const uint16_t min_dist_cm = uint16_t(min_distance_cm());
-
-            // Detect known LidarLite out-of-range artifact:
-            // when the target is beyond max range, the sensor reports
-            // abnormally low values (typically 1 cm).
-            // Condition: previous reading was near max range and new reading dropped below min
-            const bool looks_like_oor_high =
-                (_distance_cm < min_dist_cm) &&
-                (last_distance_cm > (max_dist_cm - max_dist_cm / 5));  // >80% of maximum
-
-            const uint32_t now = AP_HAL::millis();
-
-            if (looks_like_oor_high) {
-                // out-of-range artifact: explicitly report OutOfRangeHigh
-                state.last_reading_ms = now;
-                set_status(RangeFinder::Status::OutOfRangeHigh);
-                // do not update last_distance_cm — preserve valid baseline
-            } else if (abs((int)_distance_cm - (int)last_distance_cm) < 100) {
-                state.distance_m = _distance_cm * 0.01f;
-                state.last_reading_ms = now;
+            const uint16_t _distance_cm = be16toh(val);
+            const CollectResult r = process_distance_reading(
+                _distance_cm,
+                last_distance_cm,
+                state.last_reading_ms,
+                uint16_t(max_distance_cm()),
+                uint16_t(min_distance_cm()),
+                AP_HAL::millis());
+            state.last_reading_ms = r.last_reading_ms;
+            last_distance_cm      = r.last_distance_cm;
+            if (r.status == RangeFinder::Status::Good) {
+                state.distance_m = r.distance_m;
                 update_status();
-                last_distance_cm = _distance_cm;  // only update baseline with reliable data
-            } else {
-                // if stuck for too long, reset baseline to allow recovery
-                if (now - state.last_reading_ms > 100) {
-                    last_distance_cm = _distance_cm;
-                }
+            } else if (r.status != RangeFinder::Status::NoData) {
+                set_status(r.status);
             }
         } else {
             set_status(RangeFinder::Status::NoData);
@@ -240,6 +226,39 @@ bool AP_RangeFinder_PulsedLightLRF::init(void)
 failed:
     _dev->get_semaphore()->give();
     return false;
+}
+
+AP_RangeFinder_PulsedLightLRF::CollectResult
+AP_RangeFinder_PulsedLightLRF::process_distance_reading(
+    uint16_t reading_cm,
+    uint16_t last_distance_cm,
+    uint32_t last_reading_ms,
+    uint16_t max_dist_cm,
+    uint16_t min_dist_cm,
+    uint32_t now)
+{
+    CollectResult r{RangeFinder::Status::Good, last_distance_cm, last_reading_ms, 0.0f};
+
+    const bool looks_like_oor_high =
+        (reading_cm <= min_dist_cm) &&
+        (last_distance_cm >= (max_dist_cm - max_dist_cm / 5));  // >=80% of maximum
+
+    if (looks_like_oor_high) {
+        r.status = RangeFinder::Status::OutOfRangeHigh;
+        // last_distance_cm and last_reading_ms preserved:
+        // OOR artifacts are not real readings — don't let them push the recovery timer
+    } else if (abs((int)reading_cm - (int)last_distance_cm) <= 100) {
+        r.status            = RangeFinder::Status::Good;
+        r.distance_m        = reading_cm * 0.01f;
+        r.last_reading_ms   = now;
+        r.last_distance_cm  = reading_cm;
+    } else {
+        r.status = RangeFinder::Status::NoData;  // caller interprets as Ignored
+        if (now - last_reading_ms >= 100) {
+            r.last_distance_cm = reading_cm;   // baseline reset; last_reading_ms NOT updated
+        }
+    }
+    return r;
 }
 
 #endif  // AP_RANGEFINDER_PULSEDLIGHTLRF_ENABLED
