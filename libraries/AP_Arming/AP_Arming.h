@@ -43,6 +43,7 @@ public:
         ARMING_CHECK_VISION      = (1U << 18),
         ARMING_CHECK_FFT         = (1U << 19),
         ARMING_CHECK_OSD         = (1U << 20),
+        ARMING_CHECK_ODID        = (1U << 21),
     };
 
     enum class Method {
