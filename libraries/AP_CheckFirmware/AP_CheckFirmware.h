@@ -146,6 +146,10 @@ public:
         bool (*send_ota_chunk)(uint8_t flags, uint32_t offset, const uint8_t *data, uint32_t len);
         void (*request_generate_key)();
         bool (*get_public_key)(uint8_t key_out[32]);
+        // zone_config: signed by RID module key, not FC key — FC only validates size and forwards
+        bool (*send_zone_config)(const uint8_t *data, uint8_t data_len, uint8_t sig_len);
+        // request_rid_session_key: relay op 1 to RID module DroneCAN transport
+        bool (*request_rid_session_key)(uint32_t seq, const uint8_t *sig, uint8_t sig_len);
     };
     static void register_odid_callbacks(const ODIDCallbacks &cbs) { _odid_cbs = cbs; }
     static ODIDCallbacks _odid_cbs;
@@ -171,6 +175,11 @@ public:
     static OTAPendingChunk ota_pending;
     static volatile bool ota_begin_dronecan_done;
     static volatile bool ota_begin_dronecan_success;
+    static void set_rid_session_key_done(uint8_t result, const uint8_t *data, uint8_t data_len);
+    static volatile bool rid_sk_pending;
+    static volatile bool rid_sk_done;
+    static uint8_t       rid_sk_result;
+    static uint8_t       rid_sk_data[8];
 #endif
     static const struct ap_secure_data *find_public_keys(void);
 

@@ -128,6 +128,45 @@ struct SecureCmdOTACtx {
 };
 static SecureCmdOTACtx *ota_ctx[HAL_MAX_CAN_PROTOCOL_DRIVERS];
 
+struct SecureCmdZoneCfgCtx {
+    static void zone_cfg_cb(AP_OpenDroneID *self, const CanardRxTransfer &transfer,
+                            const dronecan_remoteid_SecureCommandResponse &rsp) {
+        if (rsp.result == DRONECAN_REMOTEID_SECURECOMMAND_RESPONSE_RESULT_ACCEPTED) {
+            GCS_SEND_TEXT(MAV_SEVERITY_INFO, "FLDSMDFR: zone config accepted (node %u)",
+                          transfer.source_node_id);
+        } else {
+            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "FLDSMDFR: zone config rejected by module (node %u)",
+                          transfer.source_node_id);
+        }
+    }
+    Canard::ArgCallback<AP_OpenDroneID, dronecan_remoteid_SecureCommandResponse> cb;
+    Canard::Client<dronecan_remoteid_SecureCommandResponse> client;
+    SecureCmdZoneCfgCtx(AP_OpenDroneID *self, AP_DroneCAN *uavcan) :
+        cb(self, zone_cfg_cb),
+        client(uavcan->get_canard_iface(), cb) {}
+};
+static SecureCmdZoneCfgCtx *zone_cfg_ctx[HAL_MAX_CAN_PROTOCOL_DRIVERS];
+
+struct SecureCmdRidSkCtx {
+    static void rid_sk_cb(AP_OpenDroneID *self, const CanardRxTransfer &transfer,
+                          const dronecan_remoteid_SecureCommandResponse &rsp) {
+#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
+        static constexpr uint8_t dc_to_mav[5] = {
+            MAV_RESULT_ACCEPTED, MAV_RESULT_TEMPORARILY_REJECTED,
+            MAV_RESULT_DENIED,   MAV_RESULT_UNSUPPORTED, MAV_RESULT_FAILED
+        };
+        uint8_t mav_result = ((uint8_t)rsp.result < 5) ? dc_to_mav[(uint8_t)rsp.result] : (uint8_t)MAV_RESULT_FAILED;
+        AP_CheckFirmware::set_rid_session_key_done(mav_result, rsp.data.data, rsp.data.len);
+#endif
+    }
+    Canard::ArgCallback<AP_OpenDroneID, dronecan_remoteid_SecureCommandResponse> cb;
+    Canard::Client<dronecan_remoteid_SecureCommandResponse> client;
+    SecureCmdRidSkCtx(AP_OpenDroneID *self, AP_DroneCAN *uavcan) :
+        cb(self, rid_sk_cb),
+        client(uavcan->get_canard_iface(), cb) {}
+};
+static SecureCmdRidSkCtx *rid_sk_ctx[HAL_MAX_CAN_PROTOCOL_DRIVERS];
+
 void AP_OpenDroneID::dronecan_init(AP_DroneCAN *uavcan)
 {
     const uint8_t driver_index = uavcan->get_driver_index();
@@ -197,6 +236,16 @@ void AP_OpenDroneID::dronecan_init(AP_DroneCAN *uavcan)
         goto alloc_failed;
     }
 
+    zone_cfg_ctx[driver_index] = NEW_NOTHROW SecureCmdZoneCfgCtx(this, uavcan);
+    if (zone_cfg_ctx[driver_index] == nullptr) {
+        goto alloc_failed;
+    }
+
+    rid_sk_ctx[driver_index] = NEW_NOTHROW SecureCmdRidSkCtx(this, uavcan);
+    if (rid_sk_ctx[driver_index] == nullptr) {
+        goto alloc_failed;
+    }
+
     dronecan_done_init |= driver_mask;
     return;
 
@@ -255,6 +304,16 @@ void AP_OpenDroneID::dronecan_send(AP_DroneCAN *uavcan)
         WITH_SEMAPHORE(_sem);
         dronecan_send_ota_chunk(uavcan);
         need_send_ota_chunk &= ~driver_mask;
+    }
+    if (need_send_zone_config & driver_mask) {
+        WITH_SEMAPHORE(_sem);
+        dronecan_send_zone_config(uavcan);
+        need_send_zone_config &= ~driver_mask;
+    }
+    if (need_request_rid_sk & driver_mask) {
+        WITH_SEMAPHORE(_sem);
+        dronecan_request_rid_session_key(uavcan);
+        need_request_rid_sk &= ~driver_mask;
     }
 }
 
@@ -335,6 +394,38 @@ void AP_OpenDroneID::dronecan_send_ota_chunk(AP_DroneCAN *uavcan)
         AP_CheckFirmware::ota_state = AP_CheckFirmware::OTAState::LAST_PENDING;
     }
 #endif
+}
+
+void AP_OpenDroneID::dronecan_send_zone_config(AP_DroneCAN *uavcan)
+{
+    const uint8_t driver_index = uavcan->get_driver_index();
+    if (zone_cfg_ctx[driver_index] == nullptr) {
+        return;
+    }
+    dronecan_remoteid_SecureCommandRequest req {};
+    req.sequence   = AP_HAL::millis();
+    req.operation  = DRONECAN_REMOTEID_SECURECOMMAND_REQUEST_SECURE_COMMAND_SET_REMOTEID_CONFIG;
+    req.sig_length = _zone_cfg.sig_len;
+    req.data.len   = (uint16_t)_zone_cfg.data_len + _zone_cfg.sig_len;
+    memcpy(req.data.data, _zone_cfg.data, req.data.len);
+    const uint8_t node_id = _rid_authenticated ? flying_allowed_device_node_id : _pending_auth_node_id;
+    zone_cfg_ctx[driver_index]->client.request(node_id, req);
+}
+
+void AP_OpenDroneID::dronecan_request_rid_session_key(AP_DroneCAN *uavcan)
+{
+    const uint8_t driver_index = uavcan->get_driver_index();
+    if (rid_sk_ctx[driver_index] == nullptr) {
+        return;
+    }
+    dronecan_remoteid_SecureCommandRequest req {};
+    req.sequence   = _rid_sk_req.seq;
+    req.operation  = DRONECAN_REMOTEID_SECURECOMMAND_REQUEST_SECURE_COMMAND_GET_REMOTEID_SESSION_KEY;
+    req.sig_length = _rid_sk_req.sig_len;
+    memcpy(req.data.data, _rid_sk_req.sig, _rid_sk_req.sig_len);
+    req.data.len   = _rid_sk_req.sig_len;
+    const uint8_t node_id = _rid_authenticated ? flying_allowed_device_node_id : _pending_auth_node_id;
+    rid_sk_ctx[driver_index]->client.request(node_id, req);
 }
 
 void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint8_t sig_len)

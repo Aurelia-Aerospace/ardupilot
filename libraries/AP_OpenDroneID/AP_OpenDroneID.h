@@ -97,6 +97,8 @@ public:
     void request_generate_rid_key();
     bool send_ota_begin(uint32_t fw_size);
     bool send_ota_chunk(uint8_t flags, uint32_t offset, const uint8_t *data, uint8_t data_len);
+    bool send_zone_config(const uint8_t *data, uint8_t data_len, uint8_t sig_len);
+    bool request_rid_session_key(uint32_t seq, const uint8_t *sig, uint8_t sig_len);
     uint8_t get_odid_status(){
         return arm_status.status;
     }
@@ -234,6 +236,18 @@ private:
         uint8_t len;
         uint32_t t_queued_us;  // timestamp when GCS set need_send_ota_chunk
     } _ota_chunk;
+    uint8_t need_send_zone_config;
+    struct {
+        uint8_t data[220];  // command_bytes + signature_bytes concatenated
+        uint8_t data_len;   // command bytes only (without sig)
+        uint8_t sig_len;
+    } _zone_cfg;
+    uint8_t need_request_rid_sk;
+    struct {
+        uint32_t seq;
+        uint8_t  sig[64];
+        uint8_t  sig_len;
+    } _rid_sk_req;
 
     uint8_t dronecan_done_init;
     uint8_t dronecan_init_failed;
@@ -247,6 +261,8 @@ private:
     void dronecan_send_generate_key(AP_DroneCAN *uavcan);
     void dronecan_send_ota_begin(AP_DroneCAN *uavcan);
     void dronecan_send_ota_chunk(AP_DroneCAN *uavcan);
+    void dronecan_send_zone_config(AP_DroneCAN *uavcan);
+    void dronecan_request_rid_session_key(AP_DroneCAN *uavcan);
 
     void set_missing_status();
 

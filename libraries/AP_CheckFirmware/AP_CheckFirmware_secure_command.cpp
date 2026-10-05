@@ -147,6 +147,19 @@ volatile bool AP_CheckFirmware::ota_dronecan_success;
 uint8_t AP_CheckFirmware::ota_dronecan_raw_result;
 volatile bool AP_CheckFirmware::ota_begin_dronecan_done;
 volatile bool AP_CheckFirmware::ota_begin_dronecan_success;
+volatile bool AP_CheckFirmware::rid_sk_pending;
+volatile bool AP_CheckFirmware::rid_sk_done;
+uint8_t       AP_CheckFirmware::rid_sk_result;
+uint8_t       AP_CheckFirmware::rid_sk_data[8];
+
+void AP_CheckFirmware::set_rid_session_key_done(uint8_t result, const uint8_t *data, uint8_t data_len)
+{
+    rid_sk_result = result;
+    if (result == MAV_RESULT_ACCEPTED && data_len >= 8) {
+        memcpy(rid_sk_data, data, 8);
+    }
+    rid_sk_done = true;
+}
 
 void AP_CheckFirmware::set_ota_chunk_done(bool success)
 {
@@ -368,6 +381,57 @@ void AP_CheckFirmware::handle_secure_command(mavlink_channel_t chan, const mavli
                 reply.result = is_last ? MAV_RESULT_TEMPORARILY_REJECTED : MAV_RESULT_ACCEPTED;
             }
         }
+#else
+        reply.result = MAV_RESULT_UNSUPPORTED;
+#endif
+        goto send_reply;
+    }
+
+    // SET_REMOTEID_CONFIG bypasses FC signature check — verified by the RID module using its own key
+    if (pkt.operation == SECURE_COMMAND_SET_REMOTEID_CONFIG) {
+#if AP_OPENDRONEID_ENABLED
+        if ((uint16_t)pkt.data_length + pkt.sig_length > 220) {
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        if (!_odid_cbs.send_zone_config ||
+            !_odid_cbs.send_zone_config(pkt.data, pkt.data_length, pkt.sig_length)) {
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        reply.result = MAV_RESULT_ACCEPTED;
+#else
+        reply.result = MAV_RESULT_UNSUPPORTED;
+#endif
+        goto send_reply;
+    }
+
+    // GET_REMOTEID_SESSION_KEY relays to RID module — signature passes through, RID verifies it
+    if (pkt.operation == SECURE_COMMAND_GET_REMOTEID_SESSION_KEY) {
+#if AP_OPENDRONEID_ENABLED
+        if (rid_sk_done) {
+            rid_sk_done    = false;
+            rid_sk_pending = false;
+            reply.result   = rid_sk_result;
+            if (rid_sk_result == MAV_RESULT_ACCEPTED) {
+                reply.data_length = 8;
+                memcpy(reply.data, rid_sk_data, 8);
+            }
+            goto send_reply;
+        }
+        if (rid_sk_pending) {
+            reply.result = MAV_RESULT_TEMPORARILY_REJECTED;
+            goto send_reply;
+        }
+        if (!_odid_cbs.request_rid_session_key ||
+            !_odid_cbs.request_rid_session_key(pkt.sequence,
+                                               pkt.data + pkt.data_length,
+                                               pkt.sig_length)) {
+            reply.result = MAV_RESULT_FAILED;
+            goto send_reply;
+        }
+        rid_sk_pending = true;
+        reply.result   = MAV_RESULT_TEMPORARILY_REJECTED;
 #else
         reply.result = MAV_RESULT_UNSUPPORTED;
 #endif

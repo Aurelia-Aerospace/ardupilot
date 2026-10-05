@@ -128,6 +128,12 @@ void AP_OpenDroneID::init()
         },
         .request_generate_key = []() { AP::opendroneid().request_generate_rid_key(); },
         .get_public_key = [](uint8_t k[32]) { return AP::opendroneid().get_rid_public_key(k); },
+        .send_zone_config = [](const uint8_t *d, uint8_t dl, uint8_t sl) {
+            return AP::opendroneid().send_zone_config(d, dl, sl);
+        },
+        .request_rid_session_key = [](uint32_t seq, const uint8_t *sig, uint8_t sig_len) {
+            return AP::opendroneid().request_rid_session_key(seq, sig, sig_len);
+        },
     });
 #endif
 }
@@ -980,6 +986,32 @@ bool AP_OpenDroneID::send_ota_chunk(uint8_t flags, uint32_t offset, const uint8_
     _ota_chunk.len = data_len;
     _ota_chunk.t_queued_us = AP_HAL::micros();
     need_send_ota_chunk = dronecan_send_all;
+    return true;
+}
+
+bool AP_OpenDroneID::send_zone_config(const uint8_t *data, uint8_t data_len, uint8_t sig_len)
+{
+    if ((uint16_t)data_len + sig_len > sizeof(_zone_cfg.data)) {
+        return false;
+    }
+    WITH_SEMAPHORE(_sem);
+    memcpy(_zone_cfg.data, data, (uint16_t)data_len + sig_len);
+    _zone_cfg.data_len = data_len;
+    _zone_cfg.sig_len  = sig_len;
+    need_send_zone_config = dronecan_send_all;
+    return true;
+}
+
+bool AP_OpenDroneID::request_rid_session_key(uint32_t seq, const uint8_t *sig, uint8_t sig_len)
+{
+    if (sig_len > sizeof(_rid_sk_req.sig)) {
+        return false;
+    }
+    WITH_SEMAPHORE(_sem);
+    _rid_sk_req.seq     = seq;
+    _rid_sk_req.sig_len = sig_len;
+    memcpy(_rid_sk_req.sig, sig, sig_len);
+    need_request_rid_sk = dronecan_send_all;
     return true;
 }
 
