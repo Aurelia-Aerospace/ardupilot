@@ -259,7 +259,9 @@ const AP_Scheduler::Task Copter::scheduler_tasks[] = {
 #if HAL_BUTTON_ENABLED
     SCHED_TASK_CLASS(AP_Button,            &copter.button,              update,           5, 100, 168),
 #endif
+#if AP_OPENDRONEID_ENABLED
     SCHED_TASK(check_flying_allowed, FLYING_ALLOWED_CHECK_FREQ, 50, 172),
+#endif
 };
 
 void Copter::get_scheduler_tasks(const AP_Scheduler::Task *&tasks,

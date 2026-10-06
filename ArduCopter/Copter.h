@@ -415,7 +415,9 @@ private:
         uint8_t terrain             : 1; // true if the missing terrain data failsafe has occurred
         uint8_t adsb                : 1; // true if an adsb related failsafe has occurred
         uint8_t deadreckon          : 1; // true if a dead reckoning failsafe has triggered
+#if AP_OPENDRONEID_ENABLED
         uint8_t non_allowed_area    : 1; // true if flying in a non-allowed area
+#endif
     } failsafe;
 
     bool any_failsafe_triggered() const {
@@ -758,10 +760,12 @@ private:
     MAV_RESULT mavlink_compassmot(const GCS_MAVLINK &gcs_chan);
 
     // flying_checks.cpp
+#if AP_OPENDRONEID_ENABLED
     void check_flying_allowed();
     void flying_not_allowed_event(char *flight_error);
     void flying_not_allowed_off_event();
     bool is_flying_allowed(ModeReason reason);
+#endif
 
     // crash_check.cpp
     void crash_check();

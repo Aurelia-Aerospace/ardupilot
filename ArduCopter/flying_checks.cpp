@@ -1,5 +1,7 @@
 #include "Copter.h"
 
+#if AP_OPENDRONEID_ENABLED
+
 #define MAX_FA_CHECK_FAIL 2
 
 static uint8_t fail_counter = 0;
@@ -73,3 +75,5 @@ bool Copter::is_flying_allowed(ModeReason reason)
         return true;
     }
 }
+
+#endif // AP_OPENDRONEID_ENABLED
