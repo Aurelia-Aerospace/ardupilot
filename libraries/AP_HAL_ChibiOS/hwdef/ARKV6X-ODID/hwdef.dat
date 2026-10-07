@@ -1,0 +1,11 @@
+include ../ARKV6X/hwdef.dat
+
+# use a different board ID, so vehicles with this installed are prevented from loading
+# the firmware without OpenDroneID enabled
+APJ_BOARD_ID 10057
+
+# enable and enforce OpenDroneID
+define AP_OPENDRONEID_ENABLED 1
+define AP_CUSTOM_FIRMWARE_STRING "Aurelia V4.0.0"
+
+define AP_BOOTLOADER_FLASHING_ENABLED 1
