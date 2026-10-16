@@ -6,9 +6,10 @@ The parameter must be marked @SECURE in firmware (e.g. CPS_LOCK).
 Usage:
   python3 secure_param.py --port /dev/ttyACM0 --private-key private_key {PARAM_NAME} {VALUE}
   python3 secure_param.py --port udp:127.0.0.1:14550 --private-key private_key {PARAM_NAME} {VALUE}
+  python3 secure_param.py --port udpout:support.ardupilot.org:PORT2 --passphrase PASS --private-key private_key {PARAM_NAME} {VALUE}
 '''
 
-import sys, struct, random, base64
+import sys, struct, random, base64, hashlib, time
 from argparse import ArgumentParser
 
 try:
@@ -27,6 +28,8 @@ try:
 except AttributeError:
     _SIGN_API = 'sign'
 
+import os
+os.environ['MAVLINK20'] = '1'  # before pymavlink import: SECURE_COMMAND and signing are MAVLink2-only
 try:
     from pymavlink import mavutil
 except ImportError:
@@ -38,6 +41,7 @@ SECURE_COMMAND_SET_PARAM       = 8
 
 parser = ArgumentParser(description='Set a @SECURE ArduPilot parameter')
 parser.add_argument("--port",        required=True,  help="MAVLink connection string (e.g. /dev/ttyACM0, udp:127.0.0.1:14550)")
+parser.add_argument("--passphrase", help="MAVLink2 signing passphrase (required by support.ardupilot.org engineer port)")
 parser.add_argument("--baudrate",    default=115200,  type=int)
 parser.add_argument("--private-key", required=True,  help="Private key file (PRIVATE_KEYV1: format)")
 parser.add_argument("--timeout",     default=5,       type=float, help="Reply timeout in seconds")
@@ -86,7 +90,15 @@ def main():
 
     print(f"Connecting to {args.port}...")
     mav = mavutil.mavlink_connection(args.port, baud=args.baudrate)
-    mav.wait_heartbeat()
+    if args.passphrase:
+        # support.ardupilot.org (UDPProxy) discards unsigned packets from the engineer side; key = sha256(passphrase)
+        mav.setup_signing(hashlib.sha256(args.passphrase.encode('utf-8')).digest())
+    # send first so udpout peers (e.g. support.ardupilot.org) learn our address and start forwarding
+    deadline = time.time() + args.timeout
+    while not mav.wait_heartbeat(timeout=1):
+        if time.time() > deadline:
+            print("No heartbeat (wrong/missing --passphrase?)"); sys.exit(1)
+        mav.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
     print(f"Heartbeat from system {mav.target_system} component {mav.target_component}")
 
     # Step 1: get session key

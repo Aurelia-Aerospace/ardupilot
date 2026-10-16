@@ -14,12 +14,14 @@ Flow:
 Usage:
   python3 generate_rid_key.py --signing-key private_key --port /dev/ttyACM0
   python3 generate_rid_key.py --signing-key private_key --port /dev/ttyACM0 --out rid_pubkey.dat
+  python3 generate_rid_key.py --signing-key private_key --port udpout:support.ardupilot.org:PORT2 --passphrase PASS
 """
 
 import sys
 import struct
 import random
 import base64
+import hashlib
 import time
 from argparse import ArgumentParser
 
@@ -40,6 +42,8 @@ try:
 except AttributeError:
     _SIGN_API = 'sign'
 
+import os
+os.environ['MAVLINK20'] = '1'  # before pymavlink import: SECURE_COMMAND and signing are MAVLink2-only
 try:
     from pymavlink import mavutil
 except ImportError:
@@ -55,6 +59,7 @@ parser.add_argument("--signing-key", required=True,
                     help="Firmware signing private key (PRIVATE_KEYV1: format)")
 parser.add_argument("--port", required=True,
                     help="MAVLink connection (e.g. /dev/ttyACM0, udp:127.0.0.1:14550)")
+parser.add_argument("--passphrase", help="MAVLink2 signing passphrase (required by support.ardupilot.org engineer port)")
 parser.add_argument("--baudrate", default=115200, type=int)
 parser.add_argument("--timeout", default=10, type=float,
                     help="Timeout per command in seconds (default: 10)")
@@ -121,7 +126,15 @@ def main():
 
     print(f"Connecting to {args.port}...")
     mav = mavutil.mavlink_connection(args.port, baud=args.baudrate)
-    mav.wait_heartbeat()
+    if args.passphrase:
+        # support.ardupilot.org (UDPProxy) discards unsigned packets from the engineer side; key = sha256(passphrase)
+        mav.setup_signing(hashlib.sha256(args.passphrase.encode('utf-8')).digest())
+    # send first so udpout peers (e.g. support.ardupilot.org) learn our address and start forwarding
+    deadline = time.time() + args.timeout
+    while not mav.wait_heartbeat(timeout=1):
+        if time.time() > deadline:
+            print("No heartbeat (wrong/missing --passphrase?)"); sys.exit(1)
+        mav.mav.heartbeat_send(mavutil.mavlink.MAV_TYPE_GCS, mavutil.mavlink.MAV_AUTOPILOT_INVALID, 0, 0, 0)
     print(f"Heartbeat from system {mav.target_system} component {mav.target_component}")
 
     # Step 1: get session key
