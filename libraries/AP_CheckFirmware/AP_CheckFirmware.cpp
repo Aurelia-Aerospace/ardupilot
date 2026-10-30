@@ -237,7 +237,7 @@ const AP_Param::GroupInfo AP_CheckFirmware::var_info[] = {
     // @Param: LOCK
     // @DisplayName: Parameter lock
     // @Description: Lock @LOCKED parameters from being changed via GCS or scripts. Set to 2 to allow changes.
-    // @Values: 1:Locked,2:Unlocked
+    // @Values: 0:Unlocked,1:Locked
     // @User: Advanced
     AP_GROUPINFO_FLAGS("LOCK", 1, AP_CheckFirmware, _lock, 1, AP_PARAM_FLAG_SECURE),
     // @Param: SN
@@ -256,7 +256,7 @@ AP_CheckFirmware::AP_CheckFirmware()
 
 void AP_CheckFirmware::begin()
 {
-    AP_Param::set_params_locked(_lock.get() != 2);
+    AP_Param::set_params_locked(_lock.get() != 0);
 }
 
 namespace AP {

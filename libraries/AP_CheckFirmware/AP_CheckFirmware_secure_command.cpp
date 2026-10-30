@@ -313,7 +313,7 @@ bool AP_CheckFirmware::set_public_keys(uint8_t key_idx, uint8_t num_keys, const 
 void AP_CheckFirmware::on_secure_param_write(AP_Param *vp, float value)
 {
     if (_singleton && vp == &_singleton->_lock) {
-        AP_Param::set_params_locked(static_cast<int>(value) != 2);
+        AP_Param::set_params_locked(static_cast<int>(value) != 0);
     }
 }
 
