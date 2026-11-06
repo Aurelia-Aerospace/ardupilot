@@ -11,15 +11,20 @@ void Copter::check_flying_allowed()
     auto &odid = AP::opendroneid();
     uint8_t flight_status = odid.get_odid_status();
     char *flight_error = odid.get_odid_error();
-    if (flight_status == DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_FLYING_NOT_ALLOWED ||
-        flight_status == DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_GPS ||
-        flight_status == DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_LOST_MODULE) {
-        if (fail_counter >= MAX_FA_CHECK_FAIL) {
-            flying_not_allowed_event(flight_error);
+    // only a real zone hit reacts in flight; FAIL_GPS and FAIL_LOST_MODULE only block arming (pre_arm_check)
+    if (flight_status == DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_FLYING_NOT_ALLOWED) {
+        // needs MAX_FA_CHECK_FAIL + 1 failures in a row; saturate so the counter never wraps
+        if (fail_counter < MAX_FA_CHECK_FAIL) {
+            fail_counter++;
+            return;
         }
-        fail_counter++;
+        flying_not_allowed_event(flight_error);
     } else {
-        flying_not_allowed_off_event();
+        fail_counter = 0;
+        // a zone RTL stays locked until the vehicle has landed and disarmed (user 2026-11-06)
+        if (!motors->armed()) {
+            flying_not_allowed_off_event();
+        }
     }
 }
 
@@ -29,7 +34,6 @@ void Copter::flying_not_allowed_off_event(void)
         return;
     }
     failsafe.non_allowed_area = false;
-    fail_counter = 0;
     if (AP_Notify::flags.flying_checks) {
         AP_Notify::flags.flying_checks = false;
         GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, "FLDSMDFR: event cleared");
