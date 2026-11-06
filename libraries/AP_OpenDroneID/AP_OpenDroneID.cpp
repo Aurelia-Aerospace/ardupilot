@@ -374,8 +374,10 @@ void AP_OpenDroneID::send_dynamic_out()
 void AP_OpenDroneID::send_static_out()
 {
     const uint32_t now_ms = AP_HAL::millis();
+    // signed age: the CAN thread may refresh last_arm_status_ms after now_ms was taken (no uint32 underflow)
+    const int32_t arm_status_age_ms = int32_t(now_ms - last_arm_status_ms);
     if (option_enabled(Options::EnforceArming)) {
-        if (now_ms - last_arm_status_ms > 5000) {
+        if (arm_status_age_ms > 5000) {
         // we need to notify user if we lost the transmitter
             if (now_ms - last_lost_tx_ms > 5000) {
                 last_lost_tx_ms = now_ms;
@@ -393,8 +395,15 @@ void AP_OpenDroneID::send_static_out()
         }
     }
 
-    if (now_ms - last_arm_status_ms > 1050 && _rid_authenticated) {
-        _rid_authenticated = false;
+    {
+        // under the lock: set_auth_response sets _rid_authenticated and refreshes the timer together
+        WITH_SEMAPHORE(_sem);
+        if (_rid_authenticated && AP_HAL::millis() - last_arm_status_ms > 1050) {
+            _rid_authenticated = false;
+            // forget the last status: a stale FAIL_FLYING_NOT_ALLOWED must not keep re-triggering the zone event
+            arm_status.status = INITIALIZING_MODULE;
+            arm_status.error.len = strncpy_noterm((char*)arm_status.error.data, "Initializing", sizeof(arm_status.error.data));
+        }
         // Keep _pending_auth_node_id so OTA chunks still reach the module
         // during long operations (e.g. flash erase) that delay status messages.
     }
@@ -440,6 +449,7 @@ void AP_OpenDroneID::send_static_out()
 }
 
 void AP_OpenDroneID::set_missing_status() {
+    WITH_SEMAPHORE(_sem);
     arm_status.status = DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_LOST_MODULE;
     arm_status.error.len = strncpy_noterm((char*)arm_status.error.data, "Lost connection", sizeof(arm_status.error.data));
 }
