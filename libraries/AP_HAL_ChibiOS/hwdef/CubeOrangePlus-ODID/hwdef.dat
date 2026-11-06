@@ -9,4 +9,4 @@ define AP_NETWORKING_BACKEND_PPP 0
 
 # enable and enforce OpenDroneID
 define AP_OPENDRONEID_ENABLED 1
-define AP_CUSTOM_FIRMWARE_STRING "Aurelia V4.0.0"
+define AP_CUSTOM_FIRMWARE_STRING "Aurelia V4.1.0"
