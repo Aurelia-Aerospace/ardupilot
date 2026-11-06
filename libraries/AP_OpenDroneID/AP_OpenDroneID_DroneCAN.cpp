@@ -457,6 +457,7 @@ void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint
             WITH_SEMAPHORE(_sem);
             _rid_authenticated = true;
             flying_allowed_device_node_id = node_id;
+            last_arm_status_ms = AP_HAL::millis(); // else send_static_out de-auths it again before the next ArmStatus
             GCS_SEND_TEXT(MAV_SEVERITY_INFO, "FLDSMDFR: module ready (node %u)", node_id);
         } else {
             send_auth_failed_text(node_id);
@@ -470,6 +471,7 @@ void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint
         WITH_SEMAPHORE(_sem);
         _rid_authenticated = true;
         flying_allowed_device_node_id = node_id;
+        last_arm_status_ms = AP_HAL::millis();
         return;
     }
     for (const auto &pk : sec_data->public_key) {
@@ -477,6 +479,7 @@ void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint
             WITH_SEMAPHORE(_sem);
             _rid_authenticated = true;
             flying_allowed_device_node_id = node_id;
+            last_arm_status_ms = AP_HAL::millis();
             GCS_SEND_TEXT(MAV_SEVERITY_INFO, "FLDSMDFR: module ready (node %u)", node_id);
             return;
         }
@@ -487,6 +490,7 @@ void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint
     WITH_SEMAPHORE(_sem);
     _rid_authenticated = true;
     flying_allowed_device_node_id = node_id;
+    last_arm_status_ms = AP_HAL::millis();
 #endif
 }
 
