@@ -5,23 +5,29 @@
 #define MAX_FA_CHECK_FAIL 2
 
 static uint8_t fail_counter = 0;
+static uint32_t last_switch_try_ms;
+static uint32_t last_refused_text_ms;
 
 void Copter::check_flying_allowed()
 {
+    // any disarm releases the lock, also one that bypasses AP_Arming_Copter::disarm() (main-loop stall failsafe)
+    if (!motors->armed()) {
+        flying_not_allowed_off_event();
+    }
     // only a real zone hit reacts in flight; FAIL_GPS and FAIL_LOST_MODULE only block arming (pre_arm_check)
     if (AP::opendroneid().get_odid_status() != DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_FAIL_FLYING_NOT_ALLOWED) {
         fail_counter = 0;
-        return;
+    } else if (fail_counter <= MAX_FA_CHECK_FAIL) {
+        fail_counter++; // saturates at MAX_FA_CHECK_FAIL + 1, never wraps
     }
-    // needs MAX_FA_CHECK_FAIL + 1 failures in a row; saturate so the counter never wraps
-    if (fail_counter < MAX_FA_CHECK_FAIL) {
-        fail_counter++;
-        return;
+    // zone hit (MAX_FA_CHECK_FAIL + 1 in a row), or under the lock whatever the status:
+    // a battery (Brake) or EKF (AltHold) failsafe must not leave the vehicle stuck outside RTL/SmartRTL/LAND
+    if (fail_counter > MAX_FA_CHECK_FAIL || failsafe.non_allowed_area) {
+        flying_not_allowed_event();
     }
-    flying_not_allowed_event();
 }
 
-// called from disarm: the zone lock holds until then (user 2026-11-06)
+// called from disarm and from check_flying_allowed when disarmed: the zone lock holds until then (user 2026-11-06)
 void Copter::flying_not_allowed_off_event(void)
 {
     if (!failsafe.non_allowed_area) {
@@ -48,7 +54,12 @@ void Copter::flying_not_allowed_event()
     default:
         break;
     }
-    // SmartRTL, else RTL; no LAND fallback, a failed switch is retried next tick
+    // SmartRTL, else RTL; no LAND fallback, a refused switch is retried at most once per second
+    const uint32_t now_ms = AP_HAL::millis();
+    if (now_ms - last_switch_try_ms < 1000) {
+        return;
+    }
+    last_switch_try_ms = now_ms;
     if (!set_mode(Mode::Number::SMART_RTL, ModeReason::FLYING_CHECKS) &&
         !set_mode(Mode::Number::RTL, ModeReason::FLYING_CHECKS)) {
         return;
@@ -102,7 +113,12 @@ bool Copter::is_flying_allowed(Mode::Number mode, ModeReason reason)
     if (mode == Mode::Number::LAND && zone_rtl_final_hover()) {
         return true;
     }
-    GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, "FLDSMDFR: not able to change flight mode");
+    // throttled: a refused request can repeat at loop rate (e.g. THROTTLE_LAND_ESCAPE)
+    const uint32_t now_ms = AP_HAL::millis();
+    if (now_ms - last_refused_text_ms >= 5000) {
+        last_refused_text_ms = now_ms;
+        GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL, "FLDSMDFR: not able to change flight mode");
+    }
     return false;
 }
 
