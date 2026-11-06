@@ -564,7 +564,6 @@ static void handle_arm_status(AP_DroneCAN *ap_dronecan, const CanardRxTransfer &
 
 void AP_OpenDroneID::set_arm_status(const dronecan_remoteid_ArmStatus &status, uint8_t node_id, uint8_t driver_index)
 {
-    last_arm_status_ms = AP_HAL::millis();
     if (_rid_authenticated && flying_allowed_device_node_id == node_id) {
         WITH_SEMAPHORE(_sem);
         arm_status = status;
@@ -578,4 +577,6 @@ void AP_OpenDroneID::set_arm_status(const dronecan_remoteid_ArmStatus &status, u
 }
 
 #endif // HAL_ENABLE_DRONECAN_DRIVERS
+        // only the authenticated module keeps the lost-transmitter timer alive: another node must not keep a stale OK
+        last_arm_status_ms = AP_HAL::millis();
 #endif // AP_OPENDRONEID_ENABLED
