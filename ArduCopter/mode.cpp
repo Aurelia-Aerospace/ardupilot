@@ -251,7 +251,7 @@ bool Copter::gcs_mode_enabled(const Mode::Number mode_num)
 bool Copter::set_mode(Mode::Number mode, ModeReason reason)
 {
 #if AP_OPENDRONEID_ENABLED
-    if(!is_flying_allowed(reason)) return false;
+    if (!is_flying_allowed(mode, reason)) return false;
 #endif
     // update last reason
     const ModeReason last_reason = _last_reason;

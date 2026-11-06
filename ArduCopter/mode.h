@@ -1545,6 +1545,9 @@ public:
     bool is_landing() const override;
     bool use_pilot_yaw() const override;
 
+    // hovering at RTL_ALT_FINAL at the end of the path instead of landing
+    bool final_hover() const { return smart_rtl_state == SubMode::DESCEND && state_complete(); }
+
     // Safe RTL states
     enum class SubMode : uint8_t {
         WAIT_FOR_PATH_CLEANUP,

@@ -762,9 +762,10 @@ private:
     // flying_checks.cpp
 #if AP_OPENDRONEID_ENABLED
     void check_flying_allowed();
-    void flying_not_allowed_event(char *flight_error);
+    void flying_not_allowed_event();
     void flying_not_allowed_off_event();
-    bool is_flying_allowed(ModeReason reason);
+    bool is_flying_allowed(Mode::Number mode, ModeReason reason);
+    bool zone_rtl_final_hover();
 #endif
 
     // crash_check.cpp

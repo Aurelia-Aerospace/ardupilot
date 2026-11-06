@@ -820,6 +820,11 @@ bool AP_Arming_Copter::disarm(const AP_Arming::Method method, bool do_disarm_che
     // send disarm command to motors
     copter.motors->armed(false);
 
+#if AP_OPENDRONEID_ENABLED
+    // the Remote ID zone lock holds until disarm
+    copter.flying_not_allowed_off_event();
+#endif
+
 #if MODE_AUTO_ENABLED
     // reset the mission
     copter.mode_auto.mission.reset();

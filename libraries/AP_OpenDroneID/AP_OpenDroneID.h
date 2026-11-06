@@ -103,8 +103,15 @@ public:
         return arm_status.status;
     }
 
-    char *get_odid_error(){
-        return (char*)arm_status.error.data;
+    // copy the module's error text: DroneCAN error.data (uint8[<=50]) is not NUL-terminated
+    void get_odid_error(char *buf, uint8_t buf_len) {
+        if (buf_len == 0) {
+            return;
+        }
+        WITH_SEMAPHORE(_sem);
+        const uint8_t n = MIN(MIN(arm_status.error.len, uint8_t(sizeof(arm_status.error.data))), uint8_t(buf_len - 1));
+        memcpy(buf, arm_status.error.data, n);
+        buf[n] = '\0';
     }
 
     void set_basic_id();

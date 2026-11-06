@@ -199,7 +199,7 @@ bool AP_OpenDroneID::pre_arm_check(char* failmsg, uint8_t failmsg_len)
     }
     
     if (arm_status.status != DRONECAN_REMOTEID_ARMSTATUS_ODID_ARM_STATUS_GOOD_TO_ARM) {
-        strncpy(failmsg, (const char*)arm_status.error.data, failmsg_len);
+        get_odid_error(failmsg, failmsg_len);
         return false;
     }
     
