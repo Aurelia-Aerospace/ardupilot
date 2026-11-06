@@ -428,6 +428,17 @@ void AP_OpenDroneID::dronecan_request_rid_session_key(AP_DroneCAN *uavcan)
     rid_sk_ctx[driver_index]->client.request(node_id, req);
 }
 
+// a module with the wrong key answers every challenge (2 Hz): say it once every 10 s
+void AP_OpenDroneID::send_auth_failed_text(uint8_t node_id)
+{
+    const uint32_t now_ms = AP_HAL::millis();
+    if (_last_auth_failed_text_ms != 0 && now_ms - _last_auth_failed_text_ms < 10000) {
+        return;
+    }
+    _last_auth_failed_text_ms = now_ms;
+    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "FLDSMDFR: authentication failed (node %u)", node_id);
+}
+
 void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint8_t sig_len)
 {
     if (sig_len < 64) {
@@ -448,7 +459,7 @@ void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint
             flying_allowed_device_node_id = node_id;
             GCS_SEND_TEXT(MAV_SEVERITY_INFO, "FLDSMDFR: module ready (node %u)", node_id);
         } else {
-            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "FLDSMDFR: authentication failed (node %u)", node_id);
+            send_auth_failed_text(node_id);
         }
         return;
     }
@@ -470,7 +481,7 @@ void AP_OpenDroneID::set_auth_response(uint8_t node_id, const uint8_t *sig, uint
             return;
         }
     }
-    GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "FLDSMDFR: authentication failed (node %u)", node_id);
+    send_auth_failed_text(node_id);
 #else
     // ponytail: no public keys on unsigned build, accept any RID
     WITH_SEMAPHORE(_sem);
@@ -566,6 +577,8 @@ void AP_OpenDroneID::set_arm_status(const dronecan_remoteid_ArmStatus &status, u
 {
     if (_rid_authenticated && flying_allowed_device_node_id == node_id) {
         WITH_SEMAPHORE(_sem);
+        // only the authenticated module keeps the lost-transmitter timer alive: another node must not keep a stale OK
+        last_arm_status_ms = AP_HAL::millis();
         arm_status = status;
         return;
     }
@@ -577,6 +590,4 @@ void AP_OpenDroneID::set_arm_status(const dronecan_remoteid_ArmStatus &status, u
 }
 
 #endif // HAL_ENABLE_DRONECAN_DRIVERS
-        // only the authenticated module keeps the lost-transmitter timer alive: another node must not keep a stale OK
-        last_arm_status_ms = AP_HAL::millis();
 #endif // AP_OPENDRONEID_ENABLED

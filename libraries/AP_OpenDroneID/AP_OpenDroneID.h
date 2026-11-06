@@ -270,6 +270,8 @@ private:
     bool _rid_authenticated;
     uint8_t _auth_nonce[32];
     uint32_t _auth_challenge_sent_ms;
+    uint32_t _last_auth_failed_text_ms;
+    void send_auth_failed_text(uint8_t node_id);
     uint8_t _pending_auth_node_id;
     uint8_t flying_allowed_device_node_id;
 };
