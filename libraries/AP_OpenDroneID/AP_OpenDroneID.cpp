@@ -255,7 +255,7 @@ void AP_OpenDroneID::update()
 */
 void AP_OpenDroneID::update_ota()
 {
-#if HAL_ENABLE_DRONECAN_DRIVERS
+#if HAL_ENABLE_DRONECAN_DRIVERS && AP_CHECK_FIRMWARE_ENABLED && AP_SIGNED_FIRMWARE // OTA state only exists in signed builds
 #if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
     // Process pending DroneCAN ACK here so the buffered last chunk is dispatched
     // even when no further MAVLink SECURE_COMMAND arrives (script exits after last chunk).
@@ -346,7 +346,7 @@ void AP_OpenDroneID::update_ota()
             need_send_ota_chunk &= ~driver_mask;
         }
     }
-#endif // HAL_ENABLE_DRONECAN_DRIVERS
+#endif // HAL_ENABLE_DRONECAN_DRIVERS && AP_CHECK_FIRMWARE_ENABLED && AP_SIGNED_FIRMWARE
 }
 
 // local payload space check which treats invalid channel as having space

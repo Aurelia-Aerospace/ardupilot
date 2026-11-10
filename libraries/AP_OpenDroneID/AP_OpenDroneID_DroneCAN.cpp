@@ -89,7 +89,7 @@ struct SecureCmdOTABeginCtx {
     static void ota_begin_cb(AP_OpenDroneID *self, const CanardRxTransfer &transfer,
                              const dronecan_remoteid_SecureCommandResponse &rsp) {
         bool success = (rsp.result == DRONECAN_REMOTEID_SECURECOMMAND_RESPONSE_RESULT_ACCEPTED);
-#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
+#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED && AP_SIGNED_FIRMWARE
         AP_CheckFirmware::set_ota_begin_done(success);
 #endif
         if (!success) {
@@ -110,7 +110,7 @@ struct SecureCmdOTACtx {
     static void ota_chunk_cb(AP_OpenDroneID *self, const CanardRxTransfer &transfer,
                              const dronecan_remoteid_SecureCommandResponse &rsp) {
         bool success = (rsp.result == DRONECAN_REMOTEID_SECURECOMMAND_RESPONSE_RESULT_ACCEPTED);
-#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
+#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED && AP_SIGNED_FIRMWARE
         AP_CheckFirmware::ota_dronecan_raw_result = rsp.result;
         AP_CheckFirmware::set_ota_chunk_done(success);
 #endif
@@ -150,7 +150,7 @@ static SecureCmdZoneCfgCtx *zone_cfg_ctx[HAL_MAX_CAN_PROTOCOL_DRIVERS];
 struct SecureCmdRidSkCtx {
     static void rid_sk_cb(AP_OpenDroneID *self, const CanardRxTransfer &transfer,
                           const dronecan_remoteid_SecureCommandResponse &rsp) {
-#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
+#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED && AP_SIGNED_FIRMWARE
         static constexpr uint8_t dc_to_mav[5] = {
             MAV_RESULT_ACCEPTED, MAV_RESULT_TEMPORARILY_REJECTED,
             MAV_RESULT_DENIED,   MAV_RESULT_UNSUPPORTED, MAV_RESULT_FAILED
@@ -389,7 +389,7 @@ void AP_OpenDroneID::dronecan_send_ota_chunk(AP_DroneCAN *uavcan)
     req.data.len = 5 + _ota_chunk.len;
     const uint8_t node_id = _rid_authenticated ? flying_allowed_device_node_id : _pending_auth_node_id;
     ota_ctx[driver_index]->client.request(node_id, req);
-#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED
+#if AP_CHECK_FIRMWARE_ENABLED && HAL_GCS_ENABLED && AP_SIGNED_FIRMWARE
     if (_ota_chunk.flags & 0x02) {  // FLAG_LAST dispatched — next ACK carries the real validation result
         AP_CheckFirmware::ota_state = AP_CheckFirmware::OTAState::LAST_PENDING;
     }
