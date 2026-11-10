@@ -236,7 +236,7 @@ AP_CheckFirmware *AP_CheckFirmware::_singleton;
 const AP_Param::GroupInfo AP_CheckFirmware::var_info[] = {
     // @Param: LOCK
     // @DisplayName: Parameter lock
-    // @Description: Lock @LOCKED parameters from being changed via GCS or scripts. Set to 2 to allow changes.
+    // @Description: Lock @LOCKED parameters from being changed via GCS or scripts. Set to 0 to allow changes.
     // @Values: 0:Unlocked,1:Locked
     // @User: Advanced
     AP_GROUPINFO_FLAGS("LOCK", 1, AP_CheckFirmware, _lock, 1, AP_PARAM_FLAG_SECURE),
